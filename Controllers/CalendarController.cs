@@ -41,8 +41,8 @@ public IActionResult Connect()
     [AllowAnonymous]
     public async Task<IActionResult> Callback([FromQuery] string code)
     {
-        var clientId = _config["Google__ClientId"];
-        var clientSecret = _config["Google__ClientSecret"];
+        var clientId = _config["GoogleClientId"];
+        var clientSecret = _config["GoogleClientSecret"];
         var redirectUri = "https://kappi-api-1.onrender.com/api/calendar/callback";
 
         using var http = new HttpClient();
