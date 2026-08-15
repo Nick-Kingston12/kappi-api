@@ -23,6 +23,7 @@ public class CalendarController : ControllerBase
 
     // Step 1 — redirect salon owner to Google OAuth
     [HttpGet("connect")]
+    [AllowAnonymous]
     public IActionResult Connect()
     {
         var clientId = _config["Google__ClientId"];
