@@ -23,15 +23,18 @@ public class CalendarController : ControllerBase
 
     // Step 1 — redirect salon owner to Google OAuth
     [HttpGet("connect")]
-    [AllowAnonymous]
-    public IActionResult Connect()
-    {
-        var clientId = _config["Google__ClientId"];
-        var redirectUri = "https://kappi-api-1.onrender.com/api/calendar/callback";
-        var scope = "https://www.googleapis.com/auth/calendar";
-        var url = $"https://accounts.google.com/o/oauth2/v2/auth?client_id={clientId}&redirect_uri={Uri.EscapeDataString(redirectUri)}&response_type=code&scope={Uri.EscapeDataString(scope)}&access_type=offline&prompt=consent";
-        return Redirect(url);
-    }
+[AllowAnonymous]
+public IActionResult Connect()
+{
+    var clientId = _config["Google__ClientId"];
+    if (string.IsNullOrEmpty(clientId))
+        return BadRequest("Client ID is missing");
+    
+    var redirectUri = "https://kappi-api-1.onrender.com/api/calendar/callback";
+    var scope = "https://www.googleapis.com/auth/calendar";
+    var url = $"https://accounts.google.com/o/oauth2/v2/auth?client_id={clientId}&redirect_uri={Uri.EscapeDataString(redirectUri)}&response_type=code&scope={Uri.EscapeDataString(scope)}&access_type=offline&prompt=consent";
+    return Redirect(url);
+}
 
     // Step 2 — Google redirects back here with auth code
     [HttpGet("callback")]
