@@ -10,6 +10,7 @@ public class AppDbContext : DbContext
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<Booking> Bookings => Set<Booking>();
     public DbSet<Conversation> Conversations => Set<Conversation>();
+    public DbSet<SalonOwner> SalonOwners => Set<SalonOwner>();
 }
 
 public class Salon
@@ -55,4 +56,13 @@ public class Conversation
     public string Role { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+public class SalonOwner
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public string PasswordHash { get; set; } = string.Empty;
+    public int SalonId { get; set; }
+    public Salon Salon { get; set; } = null!;
 }
