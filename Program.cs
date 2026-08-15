@@ -33,6 +33,7 @@ builder.Services.AddAuthorization();
 // Kappi services
 builder.Services.AddScoped<IWhatsAppService, WhatsAppService>();
 builder.Services.AddScoped<IClaudeService, ClaudeService>();
+builder.Services.AddScoped<IGoogleCalendarService, GoogleCalendarService>();
 
 // CORS for frontend
 builder.Services.AddCors(options =>
