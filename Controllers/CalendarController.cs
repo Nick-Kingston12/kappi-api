@@ -26,7 +26,7 @@ public class CalendarController : ControllerBase
 [AllowAnonymous]
 public IActionResult Connect()
 {
-    var clientId = _config["Google__ClientId"];
+   var clientId = _config["GoogleClientId"];
     if (string.IsNullOrEmpty(clientId))
         return BadRequest("Client ID is missing");
     
