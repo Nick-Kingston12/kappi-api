@@ -24,40 +24,55 @@ public class CalendarController : ControllerBase
     // Step 1 — redirect salon owner to Google OAuth
     [HttpGet("connect")]
 [AllowAnonymous]
-public IActionResult Connect()
+public IActionResult Connect([FromQuery] int salonId)
 {
-   var clientId = _config["GoogleClientId"];
-    if (string.IsNullOrEmpty(clientId))
-        return BadRequest("Client ID is missing");
-    
+    var clientId = _config["GoogleClientId"];
     var redirectUri = "https://kappi-api-1.onrender.com/api/calendar/callback";
     var scope = "https://www.googleapis.com/auth/calendar";
-    var url = $"https://accounts.google.com/o/oauth2/v2/auth?client_id={clientId}&redirect_uri={Uri.EscapeDataString(redirectUri)}&response_type=code&scope={Uri.EscapeDataString(scope)}&access_type=offline&prompt=consent";
+    var url = $"https://accounts.google.com/o/oauth2/v2/auth?client_id={clientId}&redirect_uri={Uri.EscapeDataString(redirectUri)}&response_type=code&scope={Uri.EscapeDataString(scope)}&access_type=offline&prompt=consent&state={salonId}";
     return Redirect(url);
 }
 
     // Step 2 — Google redirects back here with auth code
     [HttpGet("callback")]
-    [AllowAnonymous]
-    public async Task<IActionResult> Callback([FromQuery] string code)
+[AllowAnonymous]
+public async Task<IActionResult> Callback([FromQuery] string code, [FromQuery] string state)
+{
+    var clientId = _config["GoogleClientId"];
+    var clientSecret = _config["GoogleClientSecret"];
+    var redirectUri = "https://kappi-api-1.onrender.com/api/calendar/callback";
+
+    using var http = new HttpClient();
+    var response = await http.PostAsync("https://oauth2.googleapis.com/token", new FormUrlEncodedContent(new Dictionary<string, string>
     {
-        var clientId = _config["GoogleClientId"];
-        var clientSecret = _config["GoogleClientSecret"];
-        var redirectUri = "https://kappi-api-1.onrender.com/api/calendar/callback";
+        ["code"] = code,
+        ["client_id"] = clientId!,
+        ["client_secret"] = clientSecret!,
+        ["redirect_uri"] = redirectUri,
+        ["grant_type"] = "authorization_code"
+    }));
 
-        using var http = new HttpClient();
-        var response = await http.PostAsync("https://oauth2.googleapis.com/token", new FormUrlEncodedContent(new Dictionary<string, string>
+    var json = await response.Content.ReadAsStringAsync();
+    var tokenData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(json);
+
+    var accessToken = tokenData.GetProperty("access_token").GetString();
+    var refreshToken = tokenData.GetProperty("refresh_token").GetString();
+
+    // Save tokens to salon — use salonId from state parameter
+    if (int.TryParse(state, out int salonId))
+    {
+        var salon = await _db.Salons.FindAsync(salonId);
+        if (salon != null)
         {
-            ["code"] = code,
-            ["client_id"] = clientId!,
-            ["client_secret"] = clientSecret!,
-            ["redirect_uri"] = redirectUri,
-            ["grant_type"] = "authorization_code"
-        }));
-
-        var json = await response.Content.ReadAsStringAsync();
-        return Ok(new { message = "Calendar connected!", tokens = json });
+            salon.GoogleAccessToken = accessToken;
+            salon.GoogleRefreshToken = refreshToken;
+            await _db.SaveChangesAsync();
+        }
     }
+
+    // Redirect to dashboard with success message
+    return Redirect("https://kappi-web-gamma.vercel.app/dashboard?calendar=connected");
+}
 
     // Get available slots for a date
     [HttpGet("slots")]

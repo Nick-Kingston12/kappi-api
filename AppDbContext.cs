@@ -22,6 +22,8 @@ public class Salon
     public string TeamJson { get; set; } = string.Empty;
     public string HoursJson { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public string? GoogleAccessToken { get; set; }
+public string? GoogleRefreshToken { get; set; }
 }
 
 public class Customer
