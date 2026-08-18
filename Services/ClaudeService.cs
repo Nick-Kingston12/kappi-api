@@ -154,11 +154,12 @@ public class ClaudeService : IClaudeService
                 }
 
                 // Add assistant tool use and tool result to history
-                _conversationHistory[customerNumber].Add(new
-                {
-                    role = "assistant",
-                    content = result.GetProperty("content")
-                });
+               var assistantContent = JsonSerializer.Deserialize<object>(result.GetProperty("content").GetRawText())!;
+_conversationHistory[customerNumber].Add(new
+{
+    role = "assistant",
+    content = assistantContent
+});
 
                 _conversationHistory[customerNumber].Add(new
                 {
