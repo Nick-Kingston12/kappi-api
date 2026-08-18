@@ -29,14 +29,11 @@ public class WhatsAppService : IWhatsAppService
         );
     }
 
-    public async Task HandleIncomingMessageAsync(string from, string body)
-    {
-        // Get AI response from Claude
-        var reply = await _claudeService.GetBookingReplyAsync(from, body);
-
-        // Send reply back via Twilio WhatsApp
-        await SendMessageAsync(from, reply);
-    }
+   public async Task HandleIncomingMessageAsync(string from, string body)
+{
+    var reply = await _claudeService.GetBookingReplyAsync(from, body, 1);
+    await SendMessageAsync(from, reply);
+}
 
     public async Task SendMessageAsync(string to, string message)
     {

@@ -1,11 +1,12 @@
 using System.Text;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 
 namespace KappiApi.Services;
 
 public interface IClaudeService
 {
-    Task<string> GetBookingReplyAsync(string customerNumber, string message);
+    Task<string> GetBookingReplyAsync(string customerNumber, string message, int salonId);
 }
 
 public class ClaudeService : IClaudeService
@@ -13,28 +14,46 @@ public class ClaudeService : IClaudeService
     private readonly IConfiguration _config;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ClaudeService> _logger;
+    private readonly AppDbContext _db;
+    private readonly IGoogleCalendarService _calendarService;
 
-    // In-memory conversation history per customer (keyed by phone number)
-    // In production this would be stored in PostgreSQL
     private static readonly Dictionary<string, List<object>> _conversationHistory = new();
 
-    public ClaudeService(IConfiguration config, IHttpClientFactory httpClientFactory, ILogger<ClaudeService> logger)
+    public ClaudeService(IConfiguration config, IHttpClientFactory httpClientFactory, ILogger<ClaudeService> logger, AppDbContext db, IGoogleCalendarService calendarService)
     {
         _config = config;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _db = db;
+        _calendarService = calendarService;
     }
 
-    public async Task<string> GetBookingReplyAsync(string customerNumber, string message)
+    public async Task<string> GetBookingReplyAsync(string customerNumber, string message, int salonId)
     {
-        // Get or create conversation history for this customer
         if (!_conversationHistory.ContainsKey(customerNumber))
             _conversationHistory[customerNumber] = new List<object>();
 
-        // Add the customer's message to history
         _conversationHistory[customerNumber].Add(new { role = "user", content = message });
 
-        var systemPrompt = GetSalonSystemPrompt();
+        var salon = await _db.Salons.FindAsync(salonId);
+        var availabilityInfo = "";
+
+        if (salon?.GoogleAccessToken != null)
+        {
+            try
+            {
+                var tomorrow = DateTime.Now.AddDays(1);
+                var slots = await _calendarService.GetAvailableSlots(salon.GoogleAccessToken, tomorrow, 30);
+                availabilityInfo = $"\nREAL AVAILABILITY FOR TOMORROW ({tomorrow:dddd d MMMM}):\n" +
+                    (slots.Any() ? string.Join(", ", slots) : "No slots available tomorrow");
+            }
+            catch
+            {
+                availabilityInfo = "\nCalendar availability temporarily unavailable.";
+            }
+        }
+
+        var systemPrompt = GetSalonSystemPrompt(availabilityInfo);
         var requestBody = new
         {
             model = "claude-sonnet-4-6",
@@ -56,17 +75,14 @@ public class ClaudeService : IClaudeService
         var result = JsonSerializer.Deserialize<JsonElement>(responseBody);
         var reply = result.GetProperty("content")[0].GetProperty("text").GetString() ?? "Sorry, I couldn't process that.";
 
-        // Add Claude's reply to history
         _conversationHistory[customerNumber].Add(new { role = "assistant", content = reply });
 
         return reply;
     }
 
-    private string GetSalonSystemPrompt()
+    private string GetSalonSystemPrompt(string availabilityInfo)
     {
-        // This will eventually be loaded per-tenant from the database
-        // For now this is the demo salon config
-        return """
+        return $"""
             You are Kappi, the AI receptionist for Kapsalon Demo in Nijmegen.
             
             You handle appointment bookings, cancellations, and general questions.
@@ -77,7 +93,6 @@ public class ClaudeService : IClaudeService
             - Name: Kapsalon Demo
             - Address: Molenstraat 12, Nijmegen
             - Hours: Monday-Friday 9:00-18:00, Saturday 9:00-16:00, Closed Sunday
-            - Phone: +31 24 000 0000
             
             SERVICES & PRICES:
             - Knippen (Haircut): €25
@@ -91,14 +106,16 @@ public class ClaudeService : IClaudeService
             - Sarah (available Mon, Wed, Fri, Sat)
             - Kevin (available Tue, Thu, Fri, Sat)
             
+            {availabilityInfo}
+            
             BOOKING RULES:
-            - Appointments are 30 or 60 minutes depending on service
+            - Use the real availability above when suggesting time slots
             - Ask for preferred date, time, service, and stylist preference
             - Confirm the booking by repeating all details back to the customer
             - If a slot isn't available, offer the nearest alternative
             
             IMPORTANT:
-            - Never make up availability — if unsure, say you'll check and confirm shortly
+            - Never make up availability — only use the real slots provided above
             - For complex requests, let the customer know the salon owner will follow up
             - Always end with a warm closing in the customer's language
             """;
