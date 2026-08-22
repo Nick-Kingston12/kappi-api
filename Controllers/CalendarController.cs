@@ -80,4 +80,17 @@ public async Task<IActionResult> Callback([FromQuery] string code, [FromQuery] s
     {
         return Ok(new { message = $"Slots for {date} — calendar integration coming soon" });
     }
+    [HttpGet("debug")]
+[AllowAnonymous]
+public async Task<IActionResult> Debug()
+{
+    var salon = await _db.Salons.FindAsync(1);
+    return Ok(new
+    {
+        salonFound = salon != null,
+        hasAccessToken = !string.IsNullOrEmpty(salon?.GoogleAccessToken),
+        hasRefreshToken = !string.IsNullOrEmpty(salon?.GoogleRefreshToken),
+        accessTokenPreview = salon?.GoogleAccessToken?.Substring(0, 20) + "..."
+    });
+}
 }
