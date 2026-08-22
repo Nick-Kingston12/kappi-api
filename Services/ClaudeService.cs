@@ -36,29 +36,13 @@ public class ClaudeService : IClaudeService
         _conversationHistory[customerNumber].Add(new { role = "user", content = message });
 
         var salon = await _db.Salons.FindAsync(salonId);
-        var availabilityInfo = "";
-
-        if (salon?.GoogleAccessToken != null)
-        {
-            try
-            {
-                var tomorrow = DateTime.Now.AddDays(1);
-                var slots = await _calendarService.GetAvailableSlots(salon.GoogleAccessToken, tomorrow, 30);
-                availabilityInfo = $"\nREAL AVAILABILITY FOR TOMORROW ({tomorrow:dddd d MMMM}):\n" +
-                    (slots.Any() ? string.Join(", ", slots) : "No slots available tomorrow");
-            }
-            catch
-            {
-                availabilityInfo = "\nCalendar availability temporarily unavailable.";
-            }
-        }
 
         var tools = new[]
         {
             new
             {
                 name = "create_booking",
-                description = "Create a real appointment in the salon's Google Calendar when a customer has confirmed all booking details (date, time, service, and name).",
+                description = "Create an appointment in the salon calendar. Call this as soon as you have the customer name, service, stylist, date and time. Do not wait for additional confirmation.",
                 input_schema = new
                 {
                     type = "object",
@@ -69,14 +53,14 @@ public class ClaudeService : IClaudeService
                         stylist = new { type = "string", description = "Name of the stylist" },
                         date = new { type = "string", description = "Date in yyyy-MM-dd format" },
                         time = new { type = "string", description = "Time in HH:mm format" },
-                        duration_minutes = new { type = "integer", description = "Duration of the appointment in minutes" }
+                        duration_minutes = new { type = "integer", description = "Duration in minutes. Knippen=30, Knippen+Wassen=45, Verven=90, Highlights=90, Baard=15" }
                     },
                     required = new[] { "customer_name", "service", "stylist", "date", "time", "duration_minutes" }
                 }
             }
         };
 
-        var systemPrompt = GetSalonSystemPrompt(availabilityInfo);
+        var systemPrompt = GetSalonSystemPrompt();
         var requestBody = new
         {
             model = "claude-sonnet-4-6",
@@ -110,54 +94,56 @@ public class ClaudeService : IClaudeService
 
             string toolResult = "Booking failed";
 
-           if (toolName == "create_booking" && salon?.GoogleAccessToken != null)
-{
-    try
-    {
-        // Refresh token first
-        if (salon.GoogleRefreshToken != null)
-        {
-            salon.GoogleAccessToken = await _calendarService.RefreshAccessToken(salon.GoogleRefreshToken);
-            await _db.SaveChangesAsync();
-        }
+            if (toolName == "create_booking")
+            {
+                try
+                {
+                    var customerName = toolInput.GetProperty("customer_name").GetString()!;
+                    var service = toolInput.GetProperty("service").GetString()!;
+                    var stylist = toolInput.GetProperty("stylist").GetString()!;
+                    var date = toolInput.GetProperty("date").GetString()!;
+                    var time = toolInput.GetProperty("time").GetString()!;
+                    var duration = toolInput.GetProperty("duration_minutes").GetInt32();
+                    var appointmentStart = DateTime.SpecifyKind(DateTime.Parse($"{date} {time}"), DateTimeKind.Utc);
+                    var summary = $"{service} - {customerName} (via Kappi AI)";
 
-        var customerName = toolInput.GetProperty("customer_name").GetString()!;
-        var service = toolInput.GetProperty("service").GetString()!;
-        var stylist = toolInput.GetProperty("stylist").GetString()!;
-        var date = toolInput.GetProperty("date").GetString()!;
-        var time = toolInput.GetProperty("time").GetString()!;
-        var duration = toolInput.GetProperty("duration_minutes").GetInt32();
-        var appointmentStart = DateTime.SpecifyKind(DateTime.Parse($"{date} {time}"), DateTimeKind.Utc);
-        var summary = $"{service} - {customerName} (via Kappi AI)";
+                    string eventId = "saved";
+                    if (salon?.GoogleAccessToken != null)
+                    {
+                        if (salon.GoogleRefreshToken != null)
+                        {
+                            salon.GoogleAccessToken = await _calendarService.RefreshAccessToken(salon.GoogleRefreshToken);
+                        }
+                        eventId = await _calendarService.CreateBooking(
+                            salon.GoogleAccessToken,
+                            summary,
+                            appointmentStart,
+                            duration,
+                            ""
+                        );
+                        salon.GoogleAccessToken = salon.GoogleAccessToken;
+                        await _db.SaveChangesAsync();
+                    }
 
-        var eventId = await _calendarService.CreateBooking(
-            salon.GoogleAccessToken,
-            summary,
-            appointmentStart,
-            duration,
-            ""
-        );
+                    var booking = new Booking
+                    {
+                        SalonId = salonId,
+                        Service = service,
+                        Stylist = stylist,
+                        AppointmentDate = appointmentStart,
+                        Status = "confirmed"
+                    };
+                    _db.Bookings.Add(booking);
+                    await _db.SaveChangesAsync();
 
-       var booking = new Booking
-{
-    SalonId = salonId,
-    CustomerId = 1, // temporary default
-    Service = service,
-    Stylist = stylist,
-    AppointmentDate = appointmentStart,
-    Status = "confirmed"
-};
-_db.Bookings.Add(booking);
-await _db.SaveChangesAsync();
-
-        toolResult = $"Booking successfully created. Event ID: {eventId}. Appointment: {service} for {customerName} with {stylist} on {date} at {time}.";
-    }
-    catch (Exception ex)
-{
-    _logger.LogError(ex, "Failed to create booking: {Message} | StackTrace: {Stack}", ex.Message, ex.StackTrace);
-    toolResult = $"Booking failed: {ex.Message}";
-}
-}
+                    toolResult = $"Booking successfully created. Appointment: {service} for {customerName} with {stylist} on {date} at {time}.";
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to create booking: {Message}", ex.Message);
+                    toolResult = $"Booking created in system but calendar sync failed. Details: {ex.Message}";
+                }
+            }
 
             var updatedMessages = new List<object>(_conversationHistory[customerNumber]);
 
@@ -210,7 +196,7 @@ await _db.SaveChangesAsync();
         return reply;
     }
 
-    private string GetSalonSystemPrompt(string availabilityInfo)
+    private string GetSalonSystemPrompt()
     {
         var today = DateTime.Now.ToString("dddd d MMMM yyyy");
         var tomorrow = DateTime.Now.AddDays(1).ToString("dddd d MMMM yyyy");
@@ -218,12 +204,8 @@ await _db.SaveChangesAsync();
         return $"""
                 You are Kappi, the AI receptionist for Kapsalon Demo in Nijmegen.
 
-                IMPORTANT: Today is {today}. Tomorrow is {tomorrow}.
-                You always know the current date — never ask the customer what day it is.
-
-                You handle appointment bookings, cancellations, and general questions.
-                Always respond in the same language the customer uses (Dutch or English).
-                Be friendly, professional, and concise — this is WhatsApp, not email.
+                Today is {today}. Tomorrow is {tomorrow}.
+                You always know the current date. Never ask the customer what day it is.
 
                 SALON INFO:
                 - Name: Kapsalon Demo
@@ -231,29 +213,25 @@ await _db.SaveChangesAsync();
                 - Hours: Monday-Friday 9:00-18:00, Saturday 9:00-16:00, Closed Sunday
 
                 SERVICES & PRICES:
-                - Knippen (Haircut): €25
-                - Knippen + Wassen (Haircut + Wash): €35
-                - Verven (Colour): from €55
-                - Highlights: from €65
-                - Baard trimmen (Beard trim): €15
-                - Kinderen (Children under 12): €18
+                - Knippen (Haircut): €25 — 30 min
+                - Knippen + Wassen (Haircut + Wash): €35 — 45 min
+                - Verven (Colour): from €55 — 90 min
+                - Highlights: from €65 — 90 min
+                - Baard trimmen (Beard trim): €15 — 15 min
+                - Kinderen (Children under 12): €18 — 30 min
 
                 TEAM:
                 - Sarah (available Mon, Wed, Fri, Sat)
                 - Kevin (available Tue, Thu, Fri, Sat)
 
-                {availabilityInfo}
-
                 BOOKING RULES:
-                - Use the real availability above when suggesting time slots
-                - Once you have customer name, date, time, service and stylist — call the create_booking tool immediately
-                - Do not ask for confirmation before calling the tool — just book it
-                - Confirm the booking by repeating all details back to the customer after the tool succeeds
-
-                IMPORTANT:
-                - Never make up availability — only use the real slots provided above
-                - For complex requests, let the customer know the salon owner will follow up
-                - Always end with a warm closing in the customer's language
+                - When a customer gives you their name, preferred date, time and service — call create_booking IMMEDIATELY
+                - Do NOT ask for confirmation before calling the tool
+                - Do NOT say you cannot check availability for future dates — just book it
+                - If the stylist works on that day and the time is within salon hours — BOOK IT
+                - After the tool succeeds, confirm the booking details to the customer
+                - Respond in the same language the customer uses (Dutch or English)
+                - Be friendly and concise — this is WhatsApp, not email
                 """;
     }
 }
