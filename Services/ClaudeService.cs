@@ -110,46 +110,53 @@ public class ClaudeService : IClaudeService
 
             string toolResult = "Booking failed";
 
-            if (toolName == "create_booking" && salon?.GoogleAccessToken != null)
-            {
-                try
-                {
-                    var customerName = toolInput.GetProperty("customer_name").GetString()!;
-                    var service = toolInput.GetProperty("service").GetString()!;
-                    var stylist = toolInput.GetProperty("stylist").GetString()!;
-                    var date = toolInput.GetProperty("date").GetString()!;
-                    var time = toolInput.GetProperty("time").GetString()!;
-                    var duration = toolInput.GetProperty("duration_minutes").GetInt32();
-                    var appointmentStart = DateTime.Parse($"{date} {time}");
-                    var summary = $"{service} - {customerName} (via Kappi AI)";
+           if (toolName == "create_booking" && salon?.GoogleAccessToken != null)
+{
+    try
+    {
+        // Refresh token first
+        if (salon.GoogleRefreshToken != null)
+        {
+            salon.GoogleAccessToken = await _calendarService.RefreshAccessToken(salon.GoogleRefreshToken);
+            await _db.SaveChangesAsync();
+        }
 
-                    var eventId = await _calendarService.CreateBooking(
-                        salon.GoogleAccessToken,
-                        summary,
-                        appointmentStart,
-                        duration,
-                        ""
-                    );
+        var customerName = toolInput.GetProperty("customer_name").GetString()!;
+        var service = toolInput.GetProperty("service").GetString()!;
+        var stylist = toolInput.GetProperty("stylist").GetString()!;
+        var date = toolInput.GetProperty("date").GetString()!;
+        var time = toolInput.GetProperty("time").GetString()!;
+        var duration = toolInput.GetProperty("duration_minutes").GetInt32();
+        var appointmentStart = DateTime.Parse($"{date} {time}");
+        var summary = $"{service} - {customerName} (via Kappi AI)";
 
-                    var booking = new Booking
-                    {
-                        SalonId = salonId,
-                        Service = service,
-                        Stylist = stylist,
-                        AppointmentDate = appointmentStart,
-                        Status = "confirmed"
-                    };
-                    _db.Bookings.Add(booking);
-                    await _db.SaveChangesAsync();
+        var eventId = await _calendarService.CreateBooking(
+            salon.GoogleAccessToken,
+            summary,
+            appointmentStart,
+            duration,
+            ""
+        );
 
-                    toolResult = $"Booking successfully created. Event ID: {eventId}. Appointment: {service} for {customerName} with {stylist} on {date} at {time}.";
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to create booking");
-                    toolResult = $"Booking failed: {ex.Message}";
-                }
-            }
+        var booking = new Booking
+        {
+            SalonId = salonId,
+            Service = service,
+            Stylist = stylist,
+            AppointmentDate = appointmentStart,
+            Status = "confirmed"
+        };
+        _db.Bookings.Add(booking);
+        await _db.SaveChangesAsync();
+
+        toolResult = $"Booking successfully created. Event ID: {eventId}. Appointment: {service} for {customerName} with {stylist} on {date} at {time}.";
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Failed to create booking");
+        toolResult = $"Booking failed: {ex.Message}";
+    }
+}
 
             var updatedMessages = new List<object>(_conversationHistory[customerNumber]);
 

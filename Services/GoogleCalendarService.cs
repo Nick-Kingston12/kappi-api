@@ -2,6 +2,7 @@ using Google.Apis.Auth.OAuth2;
 using Google.Apis.Calendar.v3;
 using Google.Apis.Calendar.v3.Data;
 using Google.Apis.Services;
+using System.Text.Json;
 
 namespace KappiApi.Services;
 
@@ -10,10 +11,34 @@ public interface IGoogleCalendarService
     Task<List<string>> GetAvailableSlots(string accessToken, DateTime date, int durationMinutes);
     Task<string> CreateBooking(string accessToken, string summary, DateTime start, int durationMinutes, string attendeeEmail);
     Task DeleteBooking(string accessToken, string eventId);
+    Task<string> RefreshAccessToken(string refreshToken);
 }
 
 public class GoogleCalendarService : IGoogleCalendarService
 {
+    private readonly IConfiguration _config;
+
+    public GoogleCalendarService(IConfiguration config)
+    {
+        _config = config;
+    }
+
+    public async Task<string> RefreshAccessToken(string refreshToken)
+    {
+        using var http = new HttpClient();
+        var response = await http.PostAsync("https://oauth2.googleapis.com/token", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["refresh_token"] = refreshToken,
+            ["client_id"] = _config["GoogleClientId"]!,
+            ["client_secret"] = _config["GoogleClientSecret"]!,
+            ["grant_type"] = "refresh_token"
+        }));
+
+        var json = await response.Content.ReadAsStringAsync();
+        var result = JsonSerializer.Deserialize<JsonElement>(json);
+        return result.GetProperty("access_token").GetString()!;
+    }
+
     public async Task<List<string>> GetAvailableSlots(string accessToken, DateTime date, int durationMinutes)
     {
         var service = GetCalendarService(accessToken);
@@ -57,9 +82,13 @@ public class GoogleCalendarService : IGoogleCalendarService
         {
             Summary = summary,
             Start = new EventDateTime { DateTimeDateTimeOffset = start },
-            End = new EventDateTime { DateTimeDateTimeOffset = start.AddMinutes(durationMinutes) },
-            Attendees = new List<EventAttendee> { new() { Email = attendeeEmail } }
+            End = new EventDateTime { DateTimeDateTimeOffset = start.AddMinutes(durationMinutes) }
         };
+
+        if (!string.IsNullOrEmpty(attendeeEmail))
+        {
+            newEvent.Attendees = new List<EventAttendee> { new() { Email = attendeeEmail } };
+        }
 
         var created = await service.Events.Insert(newEvent, "primary").ExecuteAsync();
         return created.Id;
