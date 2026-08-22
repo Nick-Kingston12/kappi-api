@@ -127,7 +127,7 @@ public class ClaudeService : IClaudeService
         var date = toolInput.GetProperty("date").GetString()!;
         var time = toolInput.GetProperty("time").GetString()!;
         var duration = toolInput.GetProperty("duration_minutes").GetInt32();
-        var appointmentStart = DateTime.Parse($"{date} {time}");
+        var appointmentStart = DateTime.SpecifyKind(DateTime.Parse($"{date} {time}"), DateTimeKind.Utc);
         var summary = $"{service} - {customerName} (via Kappi AI)";
 
         var eventId = await _calendarService.CreateBooking(
