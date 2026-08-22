@@ -134,6 +134,7 @@ var appointmentStart = TimeZoneInfo.ConvertTimeToUtc(localTime, amsterdamZone);
                         Stylist = stylist,
                         AppointmentDate = appointmentStart,
                         Status = "confirmed"
+                         CustomerPhone = customerNumber
                     };
                     _db.Bookings.Add(booking);
                     await _db.SaveChangesAsync();

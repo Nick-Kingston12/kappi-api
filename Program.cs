@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using Hangfire;
+using Hangfire.PostgreSql;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,6 +15,11 @@ builder.Services.AddHttpClient();
 // PostgreSQL
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// Hangfire
+builder.Services.AddHangfire(config =>
+    config.UsePostgreSqlStorage(builder.Configuration.GetConnectionString("DefaultConnection")));
+builder.Services.AddHangfireServer();
 
 // JWT Authentication
 var jwtSecret = builder.Configuration["Jwt__Secret"] ?? "KappiAI-Super-Secret-Key-2026-Nijmegen-Netherlands";
@@ -34,8 +41,9 @@ builder.Services.AddAuthorization();
 builder.Services.AddScoped<IWhatsAppService, WhatsAppService>();
 builder.Services.AddScoped<IClaudeService, ClaudeService>();
 builder.Services.AddScoped<IGoogleCalendarService, GoogleCalendarService>();
+builder.Services.AddScoped<IReminderService, ReminderService>();
 
-// CORS for frontend
+// CORS
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
@@ -58,5 +66,14 @@ using (var scope = app.Services.CreateScope())
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseHangfireDashboard("/hangfire");
 app.MapControllers();
+
+// Schedule reminder job — runs every hour
+RecurringJob.AddOrUpdate<IReminderService>(
+    "send-appointment-reminders",
+    service => service.SendRemindersAsync(),
+    "0 * * * *"
+);
+
 app.Run();

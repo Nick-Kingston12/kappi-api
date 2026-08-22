@@ -48,6 +48,8 @@ public Customer? Customer { get; set; }
     public DateTime AppointmentDate { get; set; }
     public string Status { get; set; } = "confirmed";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public bool ReminderSent { get; set; } = false;
+public string? CustomerPhone { get; set; }
 }
 
 public class Conversation
