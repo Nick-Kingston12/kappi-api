@@ -127,15 +127,15 @@ var appointmentStart = TimeZoneInfo.ConvertTimeToUtc(localTime, amsterdamZone);
                         await _db.SaveChangesAsync();
                     }
 
-                    var booking = new Booking
-                    {
-                        SalonId = salonId,
-                        Service = service,
-                        Stylist = stylist,
-                        AppointmentDate = appointmentStart,
-                        Status = "confirmed"
-                         CustomerPhone = customerNumber
-                    };
+                   var booking = new Booking
+{
+    SalonId = salonId,
+    Service = service,
+    Stylist = stylist,
+    AppointmentDate = appointmentStart,
+    Status = "confirmed",
+    CustomerPhone = customerNumber
+};
                     _db.Bookings.Add(booking);
                     await _db.SaveChangesAsync();
 
