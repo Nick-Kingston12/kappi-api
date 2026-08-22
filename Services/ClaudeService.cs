@@ -138,24 +138,25 @@ public class ClaudeService : IClaudeService
             ""
         );
 
-        var booking = new Booking
-        {
-            SalonId = salonId,
-            Service = service,
-            Stylist = stylist,
-            AppointmentDate = appointmentStart,
-            Status = "confirmed"
-        };
-        _db.Bookings.Add(booking);
-        await _db.SaveChangesAsync();
+       var booking = new Booking
+{
+    SalonId = salonId,
+    CustomerId = 1, // temporary default
+    Service = service,
+    Stylist = stylist,
+    AppointmentDate = appointmentStart,
+    Status = "confirmed"
+};
+_db.Bookings.Add(booking);
+await _db.SaveChangesAsync();
 
         toolResult = $"Booking successfully created. Event ID: {eventId}. Appointment: {service} for {customerName} with {stylist} on {date} at {time}.";
     }
     catch (Exception ex)
-    {
-        _logger.LogError(ex, "Failed to create booking");
-        toolResult = $"Booking failed: {ex.Message}";
-    }
+{
+    _logger.LogError(ex, "Failed to create booking: {Message} | StackTrace: {Stack}", ex.Message, ex.StackTrace);
+    toolResult = $"Booking failed: {ex.Message}";
+}
 }
 
             var updatedMessages = new List<object>(_conversationHistory[customerNumber]);
