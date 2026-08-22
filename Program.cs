@@ -15,7 +15,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 // JWT Authentication
-var jwtSecret = builder.Configuration["Jwt__Secret"] ?? "dev-secret-key-change-in-production";
+var jwtSecret = builder.Configuration["Jwt__Secret"] ?? "KappiAI-Super-Secret-Key-2026-Nijmegen-Netherlands";
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {

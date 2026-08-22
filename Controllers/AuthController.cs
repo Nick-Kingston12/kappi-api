@@ -67,7 +67,7 @@ public class AuthController : ControllerBase
 
     private string GenerateToken(SalonOwner owner)
     {
-        var secret = _config["Jwt__Secret"] ?? _config["Jwt:Secret"] ?? "kappi-fallback-secret-2026";
+        var secret = _config["Jwt__Secret"] ?? "KappiAI-Super-Secret-Key-2026-Nijmegen-Netherlands";
 var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
         var token = new JwtSecurityToken(
