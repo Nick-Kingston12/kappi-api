@@ -95,38 +95,35 @@ public class ClaudeService : IClaudeService
 
         var response = await client.PostAsync("https://api.anthropic.com/v1/messages", content);
         var responseBody = await response.Content.ReadAsStringAsync();
-
         var result = JsonSerializer.Deserialize<JsonElement>(responseBody);
         var stopReason = result.GetProperty("stop_reason").GetString();
+        var contentArray = result.GetProperty("content");
 
-        // Handle tool use
         if (stopReason == "tool_use")
         {
-            var toolUseBlock = result.GetProperty("content").EnumerateArray()
-                .First(c => c.GetProperty("type").GetString() == "tool_use");
+            var toolUseBlock = contentArray.EnumerateArray()
+                .FirstOrDefault(c => c.GetProperty("type").GetString() == "tool_use");
 
             var toolName = toolUseBlock.GetProperty("name").GetString();
             var toolInput = toolUseBlock.GetProperty("input");
             var toolUseId = toolUseBlock.GetProperty("id").GetString();
 
+            string toolResult = "Booking failed";
+
             if (toolName == "create_booking" && salon?.GoogleAccessToken != null)
             {
-                var customerName = toolInput.GetProperty("customer_name").GetString()!;
-                var service = toolInput.GetProperty("service").GetString()!;
-                var stylist = toolInput.GetProperty("stylist").GetString()!;
-                var date = toolInput.GetProperty("date").GetString()!;
-                var time = toolInput.GetProperty("time").GetString()!;
-                var duration = toolInput.GetProperty("duration_minutes").GetInt32();
-
-                var appointmentStart = DateTime.Parse($"{date} {time}");
-                var summary = $"{service} - {customerName} (via Kappi AI)";
-
-                string eventId = "";
-                string toolResult = "";
-
                 try
                 {
-                    eventId = await _calendarService.CreateBooking(
+                    var customerName = toolInput.GetProperty("customer_name").GetString()!;
+                    var service = toolInput.GetProperty("service").GetString()!;
+                    var stylist = toolInput.GetProperty("stylist").GetString()!;
+                    var date = toolInput.GetProperty("date").GetString()!;
+                    var time = toolInput.GetProperty("time").GetString()!;
+                    var duration = toolInput.GetProperty("duration_minutes").GetInt32();
+                    var appointmentStart = DateTime.Parse($"{date} {time}");
+                    var summary = $"{service} - {customerName} (via Kappi AI)";
+
+                    var eventId = await _calendarService.CreateBooking(
                         salon.GoogleAccessToken,
                         summary,
                         appointmentStart,
@@ -134,7 +131,6 @@ public class ClaudeService : IClaudeService
                         ""
                     );
 
-                    // Save booking to database
                     var booking = new Booking
                     {
                         SalonId = salonId,
@@ -146,55 +142,59 @@ public class ClaudeService : IClaudeService
                     _db.Bookings.Add(booking);
                     await _db.SaveChangesAsync();
 
-                    toolResult = $"Booking created successfully. Calendar event ID: {eventId}";
+                    toolResult = $"Booking successfully created. Event ID: {eventId}. Appointment: {service} for {customerName} with {stylist} on {date} at {time}.";
                 }
                 catch (Exception ex)
                 {
-                    toolResult = $"Failed to create booking: {ex.Message}";
+                    _logger.LogError(ex, "Failed to create booking");
+                    toolResult = $"Booking failed: {ex.Message}";
                 }
-
-                // Add assistant tool use and tool result to history
-               var assistantContent = JsonSerializer.Deserialize<object>(result.GetProperty("content").GetRawText())!;
-_conversationHistory[customerNumber].Add(new
-{
-    role = "assistant",
-    content = assistantContent
-});
-
-                _conversationHistory[customerNumber].Add(new
-                {
-                    role = "user",
-                    content = new[]
-                    {
-                        new
-                        {
-                            type = "tool_result",
-                            tool_use_id = toolUseId,
-                            content = toolResult
-                        }
-                    }
-                });
-
-                // Get final response from Claude
-                var followUpBody = new
-                {
-                    model = "claude-sonnet-4-6",
-                    max_tokens = 1024,
-                    system = systemPrompt,
-                    tools,
-                    messages = _conversationHistory[customerNumber]
-                };
-
-                var followUpJson = JsonSerializer.Serialize(followUpBody);
-                var followUpContent = new StringContent(followUpJson, Encoding.UTF8, "application/json");
-                var followUpResponse = await client.PostAsync("https://api.anthropic.com/v1/messages", followUpContent);
-                var followUpBody2 = await followUpResponse.Content.ReadAsStringAsync();
-                var followUpResult = JsonSerializer.Deserialize<JsonElement>(followUpBody2);
-                var finalReply = followUpResult.GetProperty("content")[0].GetProperty("text").GetString() ?? "Booking confirmed!";
-
-                _conversationHistory[customerNumber].Add(new { role = "assistant", content = finalReply });
-                return finalReply;
             }
+
+            var updatedMessages = new List<object>(_conversationHistory[customerNumber]);
+
+            updatedMessages.Add(new
+            {
+                role = "assistant",
+                content = contentArray.EnumerateArray()
+                    .Select(c => JsonSerializer.Deserialize<object>(c.GetRawText())!)
+                    .ToArray()
+            });
+
+            updatedMessages.Add(new
+            {
+                role = "user",
+                content = new[]
+                {
+                    new
+                    {
+                        type = "tool_result",
+                        tool_use_id = toolUseId,
+                        content = toolResult
+                    }
+                }
+            });
+
+            var followUpBody = new
+            {
+                model = "claude-sonnet-4-6",
+                max_tokens = 1024,
+                system = systemPrompt,
+                tools,
+                messages = updatedMessages
+            };
+
+            var followUpJson = JsonSerializer.Serialize(followUpBody);
+            var followUpContent = new StringContent(followUpJson, Encoding.UTF8, "application/json");
+            var followUpResponse = await client.PostAsync("https://api.anthropic.com/v1/messages", followUpContent);
+            var followUpResponseBody = await followUpResponse.Content.ReadAsStringAsync();
+            var followUpResult = JsonSerializer.Deserialize<JsonElement>(followUpResponseBody);
+            var finalReply = followUpResult.GetProperty("content")[0].GetProperty("text").GetString() ?? "Boeking bevestigd!";
+
+            _conversationHistory[customerNumber] = updatedMessages;
+            _conversationHistory[customerNumber].Add(new { role = "assistant", content = finalReply });
+
+            return finalReply;
         }
 
         var reply = result.GetProperty("content")[0].GetProperty("text").GetString() ?? "Sorry, I couldn't process that.";
@@ -238,9 +238,9 @@ _conversationHistory[customerNumber].Add(new
 
                 BOOKING RULES:
                 - Use the real availability above when suggesting time slots
-                - Once you have customer name, date, time, service and stylist — call the create_booking tool
-                - Confirm the booking by repeating all details back to the customer
-                - If a slot isn't available, offer the nearest alternative
+                - Once you have customer name, date, time, service and stylist — call the create_booking tool immediately
+                - Do not ask for confirmation before calling the tool — just book it
+                - Confirm the booking by repeating all details back to the customer after the tool succeeds
 
                 IMPORTANT:
                 - Never make up availability — only use the real slots provided above
