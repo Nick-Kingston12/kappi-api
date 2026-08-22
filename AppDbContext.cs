@@ -39,8 +39,8 @@ public class Customer
 public class Booking
 {
     public int Id { get; set; }
-    public int CustomerId { get; set; }
-    public Customer Customer { get; set; } = null!;
+    public int? CustomerId { get; set; }
+public Customer? Customer { get; set; }
     public int SalonId { get; set; }
     public Salon Salon { get; set; } = null!;
     public string Service { get; set; } = string.Empty;
