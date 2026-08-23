@@ -34,6 +34,17 @@ public class ClaudeService : IClaudeService
             _conversationHistory[customerNumber] = new List<object>();
 
         _conversationHistory[customerNumber].Add(new { role = "user", content = message });
+        // Save message to database
+var incomingMsg = new Conversation
+{
+    PhoneNumber = customerNumber,
+    SalonId = salonId,
+    Role = "user",
+    Message = message,
+    CreatedAt = DateTime.UtcNow
+};
+_db.Conversations.Add(incomingMsg);
+await _db.SaveChangesAsync();
 
         var salon = await _db.Salons.FindAsync(salonId);
 
@@ -228,8 +239,21 @@ public class ClaudeService : IClaudeService
         }
 
         var reply = result.GetProperty("content")[0].GetProperty("text").GetString() ?? "Sorry, I couldn't process that.";
-        _conversationHistory[customerNumber].Add(new { role = "assistant", content = reply });
-        return reply;
+_conversationHistory[customerNumber].Add(new { role = "assistant", content = reply });
+
+// Save reply to database
+var outgoingMsg = new Conversation
+{
+    PhoneNumber = customerNumber,
+    SalonId = salonId,
+    Role = "assistant",
+    Message = reply,
+    CreatedAt = DateTime.UtcNow
+};
+_db.Conversations.Add(outgoingMsg);
+await _db.SaveChangesAsync();
+
+return reply;
     }
 
     private string GetSalonSystemPrompt(string customerContext)
