@@ -18,12 +18,17 @@ public class Salon
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public string WhatsAppNumber { get; set; } = string.Empty;
-    public string ServicesJson { get; set; } = string.Empty;
-    public string TeamJson { get; set; } = string.Empty;
-    public string HoursJson { get; set; } = string.Empty;
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public string ServicesJson { get; set; } = "[]";
+    public string TeamJson { get; set; } = "[]";
+    public string HoursJson { get; set; } = "{}";
+    public string? Address { get; set; }
+    public string? Phone { get; set; }
+    public string? HoursText { get; set; }
+    public string? ServicesText { get; set; }
+    public string? TeamText { get; set; }
     public string? GoogleAccessToken { get; set; }
-public string? GoogleRefreshToken { get; set; }
+    public string? GoogleRefreshToken { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
 public class Customer
