@@ -32,8 +32,13 @@ public class Customer
     public string PhoneNumber { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string Language { get; set; } = "nl";
+    public string? PreferredStylist { get; set; }
+    public string? PreferredService { get; set; }
+    public int TotalBookings { get; set; } = 0;
+    public DateTime? LastVisit { get; set; }
     public int SalonId { get; set; }
     public Salon Salon { get; set; } = null!;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
 public class Booking

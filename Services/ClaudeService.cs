@@ -37,6 +37,25 @@ public class ClaudeService : IClaudeService
 
         var salon = await _db.Salons.FindAsync(salonId);
 
+        // Find or create customer profile
+        var customer = await _db.Customers.FirstOrDefaultAsync(c => c.PhoneNumber == customerNumber && c.SalonId == salonId);
+        if (customer == null)
+        {
+            customer = new Customer
+            {
+                PhoneNumber = customerNumber,
+                SalonId = salonId,
+                Name = "",
+                Language = "nl"
+            };
+            _db.Customers.Add(customer);
+            await _db.SaveChangesAsync();
+        }
+
+        var customerContext = customer.Name != ""
+            ? $"\nRETURNING CUSTOMER: {customer.Name} | Preferred stylist: {customer.PreferredStylist ?? "no preference"} | Preferred service: {customer.PreferredService ?? "unknown"} | Total bookings: {customer.TotalBookings} | Last visit: {(customer.LastVisit.HasValue ? customer.LastVisit.Value.ToString("d MMMM yyyy") : "first time")}"
+            : "\nNEW CUSTOMER: No profile yet. When they give their name, remember it.";
+
         var tools = new[]
         {
             new
@@ -60,7 +79,7 @@ public class ClaudeService : IClaudeService
             }
         };
 
-        var systemPrompt = GetSalonSystemPrompt();
+        var systemPrompt = GetSalonSystemPrompt(customerContext);
         var requestBody = new
         {
             model = "claude-sonnet-4-6",
@@ -105,8 +124,8 @@ public class ClaudeService : IClaudeService
                     var time = toolInput.GetProperty("time").GetString()!;
                     var duration = toolInput.GetProperty("duration_minutes").GetInt32();
                     var amsterdamZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Amsterdam");
-var localTime = DateTime.Parse($"{date} {time}");
-var appointmentStart = TimeZoneInfo.ConvertTimeToUtc(localTime, amsterdamZone);
+                    var localTime = DateTime.Parse($"{date} {time}");
+                    var appointmentStart = TimeZoneInfo.ConvertTimeToUtc(localTime, amsterdamZone);
                     var summary = $"{service} - {customerName} (via Kappi AI)";
 
                     string eventId = "saved";
@@ -123,23 +142,37 @@ var appointmentStart = TimeZoneInfo.ConvertTimeToUtc(localTime, amsterdamZone);
                             duration,
                             ""
                         );
-                        salon.GoogleAccessToken = salon.GoogleAccessToken;
                         await _db.SaveChangesAsync();
                     }
 
-                   var booking = new Booking
-{
-    SalonId = salonId,
-    Service = service,
-    Stylist = stylist,
-    AppointmentDate = appointmentStart,
-    Status = "confirmed",
-    CustomerPhone = customerNumber
-};
+                    var booking = new Booking
+                    {
+                        SalonId = salonId,
+                        Service = service,
+                        Stylist = stylist,
+                        AppointmentDate = appointmentStart,
+                        Status = "confirmed",
+                        CustomerPhone = customerNumber
+                    };
                     _db.Bookings.Add(booking);
+
+                    // Update customer profile
+                    customer.Name = customerName;
+                    customer.PreferredStylist = stylist;
+                    customer.PreferredService = service;
+                    customer.TotalBookings += 1;
+                    customer.LastVisit = appointmentStart;
+
                     await _db.SaveChangesAsync();
 
-                    toolResult = $"Booking successfully created. Appointment: {service} for {customerName} with {stylist} on {date} at {time}.";
+                    // Check for loyalty milestone
+                    var loyaltyMessage = "";
+                    if (customer.TotalBookings % 5 == 0)
+                    {
+                        loyaltyMessage = $" This is their {customer.TotalBookings}th booking — trigger a loyalty reward message.";
+                    }
+
+                    toolResult = $"Booking successfully created. Appointment: {service} for {customerName} with {stylist} on {date} at {time}.{loyaltyMessage}";
                 }
                 catch (Exception ex)
                 {
@@ -199,7 +232,7 @@ var appointmentStart = TimeZoneInfo.ConvertTimeToUtc(localTime, amsterdamZone);
         return reply;
     }
 
-    private string GetSalonSystemPrompt()
+    private string GetSalonSystemPrompt(string customerContext)
     {
         var today = DateTime.Now.ToString("dddd d MMMM yyyy");
         var tomorrow = DateTime.Now.AddDays(1).ToString("dddd d MMMM yyyy");
@@ -209,6 +242,8 @@ var appointmentStart = TimeZoneInfo.ConvertTimeToUtc(localTime, amsterdamZone);
 
                 Today is {today}. Tomorrow is {tomorrow}.
                 You always know the current date. Never ask the customer what day it is.
+
+                {customerContext}
 
                 SALON INFO:
                 - Name: Kapsalon Demo
@@ -228,11 +263,12 @@ var appointmentStart = TimeZoneInfo.ConvertTimeToUtc(localTime, amsterdamZone);
                 - Kevin (available Tue, Thu, Fri, Sat)
 
                 BOOKING RULES:
-                - When a customer gives you their name, preferred date, time and service — call create_booking IMMEDIATELY
+                - If this is a returning customer, greet them by name warmly
+                - When a customer gives their name, date, time and service — call create_booking IMMEDIATELY
                 - Do NOT ask for confirmation before calling the tool
-                - Do NOT say you cannot check availability for future dates — just book it
                 - If the stylist works on that day and the time is within salon hours — BOOK IT
                 - After the tool succeeds, confirm the booking details to the customer
+                - If the tool result mentions a loyalty milestone, congratulate them and mention a reward
                 - Respond in the same language the customer uses (Dutch or English)
                 - Be friendly and concise — this is WhatsApp, not email
                 """;
