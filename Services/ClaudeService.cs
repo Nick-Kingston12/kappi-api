@@ -228,12 +228,13 @@ public class ClaudeService : IClaudeService
                     var appointmentDate = toolInput.GetProperty("appointment_date").GetString()!;
                     var date = DateTime.SpecifyKind(DateTime.Parse(appointmentDate), DateTimeKind.Utc);
 
-                    var booking = await _db.Bookings.FirstOrDefaultAsync(b =>
-                        b.SalonId == salonId &&
-                        b.CustomerPhone == customerPhone &&
-                        b.AppointmentDate.Date == date.Date &&
-                        b.Status == "confirmed");
-
+                    var normalizedPhone = customerPhone.Replace("whatsapp:", "");
+var booking = await _db.Bookings.FirstOrDefaultAsync(b =>
+    b.SalonId == salonId &&
+    (b.CustomerPhone == customerPhone || 
+     b.CustomerPhone == $"whatsapp:{normalizedPhone}" ||
+     b.CustomerPhone.Contains(normalizedPhone)) &&
+    b.Status == "confirmed");
                     if (booking != null)
                     {
                         booking.Status = "cancelled";
