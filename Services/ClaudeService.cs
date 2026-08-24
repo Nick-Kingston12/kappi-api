@@ -16,8 +16,7 @@ public class ClaudeService : IClaudeService
     private readonly ILogger<ClaudeService> _logger;
     private readonly AppDbContext _db;
     private readonly IGoogleCalendarService _calendarService;
-    private readonly IWhatsAppService _whatsAppService;
-
+   
     private static readonly Dictionary<string, List<object>> _conversationHistory = new();
 
     public ClaudeService(IConfiguration config, IHttpClientFactory httpClientFactory, ILogger<ClaudeService> logger, AppDbContext db, IGoogleCalendarService calendarService, IWhatsAppService whatsAppService)
@@ -27,7 +26,7 @@ public class ClaudeService : IClaudeService
         _logger = logger;
         _db = db;
         _calendarService = calendarService;
-        _whatsAppService = whatsAppService;
+        
     }
 
     public async Task<string> GetBookingReplyAsync(string customerNumber, string message, int salonId)
@@ -247,18 +246,34 @@ public class ClaudeService : IClaudeService
                             .ToListAsync();
 
                         foreach (var entry in waitlistEntries)
-                        {
-                            try
-                            {
-                                var notifyMessage = $"Goed nieuws {entry.CustomerName}! 🎉 Er is een plek vrijgekomen bij {salon?.Name}. Wil je een afspraak maken? Stuur ons een bericht!";
-                                await _whatsAppService.SendMessageAsync(entry.CustomerPhone, notifyMessage);
-                                entry.Notified = true;
-                            }
-                            catch { }
-                        }
-                        await _db.SaveChangesAsync();
+{
+    try
+    {
+        var notifyMessage = $"Goed nieuws {entry.CustomerName}! 🎉 Er is een plek vrijgekomen bij {salon?.Name}. Wil je een afspraak maken? Stuur ons een bericht!";
+        
+        var twilioSid = _config["Twilio__AccountSid"];
+        var twilioToken = _config["Twilio__AuthToken"];
+        var twilioFrom = _config["Twilio__WhatsAppNumber"];
 
-                        toolResult = $"Booking cancelled successfully. {waitlistEntries.Count} waitlist customers notified.";
+        using var twilioClient = new HttpClient();
+        var authBytes = System.Text.Encoding.ASCII.GetBytes($"{twilioSid}:{twilioToken}");
+        twilioClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var twilioContent = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["From"] = twilioFrom!,
+            ["To"] = entry.CustomerPhone,
+            ["Body"] = notifyMessage
+        });
+
+        await twilioClient.PostAsync($"https://api.twilio.com/2010-04-01/Accounts/{twilioSid}/Messages.json", twilioContent);
+        entry.Notified = true;
+    }
+    catch { }
+}
+await _db.SaveChangesAsync();
+
+toolResult = $"Booking cancelled successfully. {waitlistEntries.Count} waitlist customers notified.";
                     }
                     else
                     {
