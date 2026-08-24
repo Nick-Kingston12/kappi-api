@@ -16,16 +16,18 @@ public class ClaudeService : IClaudeService
     private readonly ILogger<ClaudeService> _logger;
     private readonly AppDbContext _db;
     private readonly IGoogleCalendarService _calendarService;
+    private readonly IWhatsAppService _whatsAppService;
 
     private static readonly Dictionary<string, List<object>> _conversationHistory = new();
 
-    public ClaudeService(IConfiguration config, IHttpClientFactory httpClientFactory, ILogger<ClaudeService> logger, AppDbContext db, IGoogleCalendarService calendarService)
+    public ClaudeService(IConfiguration config, IHttpClientFactory httpClientFactory, ILogger<ClaudeService> logger, AppDbContext db, IGoogleCalendarService calendarService, IWhatsAppService whatsAppService)
     {
         _config = config;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _db = db;
         _calendarService = calendarService;
+        _whatsAppService = whatsAppService;
     }
 
     public async Task<string> GetBookingReplyAsync(string customerNumber, string message, int salonId)
@@ -34,17 +36,18 @@ public class ClaudeService : IClaudeService
             _conversationHistory[customerNumber] = new List<object>();
 
         _conversationHistory[customerNumber].Add(new { role = "user", content = message });
+
         // Save message to database
-var incomingMsg = new Conversation
-{
-    PhoneNumber = customerNumber,
-    SalonId = salonId,
-    Role = "user",
-    Message = message,
-    CreatedAt = DateTime.UtcNow
-};
-_db.Conversations.Add(incomingMsg);
-await _db.SaveChangesAsync();
+        var incomingMsg = new Conversation
+        {
+            PhoneNumber = customerNumber,
+            SalonId = salonId,
+            Role = "user",
+            Message = message,
+            CreatedAt = DateTime.UtcNow
+        };
+        _db.Conversations.Add(incomingMsg);
+        await _db.SaveChangesAsync();
 
         var salon = await _db.Salons.FindAsync(salonId);
 
@@ -67,7 +70,7 @@ await _db.SaveChangesAsync();
             ? $"\nRETURNING CUSTOMER: {customer.Name} | Preferred stylist: {customer.PreferredStylist ?? "no preference"} | Preferred service: {customer.PreferredService ?? "unknown"} | Total bookings: {customer.TotalBookings} | Last visit: {(customer.LastVisit.HasValue ? customer.LastVisit.Value.ToString("d MMMM yyyy") : "first time")}"
             : "\nNEW CUSTOMER: No profile yet. When they give their name, remember it.";
 
-        var tools = new[]
+        var tools = new object[]
         {
             new
             {
@@ -86,6 +89,39 @@ await _db.SaveChangesAsync();
                         duration_minutes = new { type = "integer", description = "Duration in minutes. Knippen=30, Knippen+Wassen=45, Verven=90, Highlights=90, Baard=15" }
                     },
                     required = new[] { "customer_name", "service", "stylist", "date", "time", "duration_minutes" }
+                }
+            },
+            new
+            {
+                name = "cancel_booking",
+                description = "Cancel an existing appointment when a customer requests cancellation.",
+                input_schema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        customer_phone = new { type = "string", description = "Customer phone number" },
+                        appointment_date = new { type = "string", description = "Date of appointment in yyyy-MM-dd format" }
+                    },
+                    required = new[] { "customer_phone", "appointment_date" }
+                }
+            },
+            new
+            {
+                name = "add_to_waitlist",
+                description = "Add a customer to the waitlist when their preferred slot is unavailable.",
+                input_schema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        customer_name = new { type = "string", description = "Customer name" },
+                        customer_phone = new { type = "string", description = "Customer phone number" },
+                        preferred_service = new { type = "string", description = "Service they want" },
+                        preferred_stylist = new { type = "string", description = "Stylist preference" },
+                        preferred_day = new { type = "string", description = "Preferred day e.g. Monday, Wednesday" }
+                    },
+                    required = new[] { "customer_name", "customer_phone", "preferred_service", "preferred_day" }
                 }
             }
         };
@@ -122,7 +158,7 @@ await _db.SaveChangesAsync();
             var toolInput = toolUseBlock.GetProperty("input");
             var toolUseId = toolUseBlock.GetProperty("id").GetString();
 
-            string toolResult = "Booking failed";
+            string toolResult = "Operation failed";
 
             if (toolName == "create_booking")
             {
@@ -143,9 +179,8 @@ await _db.SaveChangesAsync();
                     if (salon?.GoogleAccessToken != null)
                     {
                         if (salon.GoogleRefreshToken != null)
-                        {
                             salon.GoogleAccessToken = await _calendarService.RefreshAccessToken(salon.GoogleRefreshToken);
-                        }
+
                         eventId = await _calendarService.CreateBooking(
                             salon.GoogleAccessToken,
                             summary,
@@ -167,7 +202,6 @@ await _db.SaveChangesAsync();
                     };
                     _db.Bookings.Add(booking);
 
-                    // Update customer profile
                     customer.Name = customerName;
                     customer.PreferredStylist = stylist;
                     customer.PreferredService = service;
@@ -176,12 +210,9 @@ await _db.SaveChangesAsync();
 
                     await _db.SaveChangesAsync();
 
-                    // Check for loyalty milestone
                     var loyaltyMessage = "";
                     if (customer.TotalBookings % 5 == 0)
-                    {
                         loyaltyMessage = $" This is their {customer.TotalBookings}th booking — trigger a loyalty reward message.";
-                    }
 
                     toolResult = $"Booking successfully created. Appointment: {service} for {customerName} with {stylist} on {date} at {time}.{loyaltyMessage}";
                 }
@@ -189,6 +220,87 @@ await _db.SaveChangesAsync();
                 {
                     _logger.LogError(ex, "Failed to create booking: {Message}", ex.Message);
                     toolResult = $"Booking created in system but calendar sync failed. Details: {ex.Message}";
+                }
+            }
+            else if (toolName == "cancel_booking")
+            {
+                try
+                {
+                    var customerPhone = toolInput.GetProperty("customer_phone").GetString()!;
+                    var appointmentDate = toolInput.GetProperty("appointment_date").GetString()!;
+                    var date = DateTime.SpecifyKind(DateTime.Parse(appointmentDate), DateTimeKind.Utc);
+
+                    var booking = await _db.Bookings.FirstOrDefaultAsync(b =>
+                        b.SalonId == salonId &&
+                        b.CustomerPhone == customerPhone &&
+                        b.AppointmentDate.Date == date.Date &&
+                        b.Status == "confirmed");
+
+                    if (booking != null)
+                    {
+                        booking.Status = "cancelled";
+                        await _db.SaveChangesAsync();
+
+                        // Notify waitlist
+                        var waitlistEntries = await _db.WaitlistEntries
+                            .Where(w => w.SalonId == salonId && !w.Notified)
+                            .ToListAsync();
+
+                        foreach (var entry in waitlistEntries)
+                        {
+                            try
+                            {
+                                var notifyMessage = $"Goed nieuws {entry.CustomerName}! 🎉 Er is een plek vrijgekomen bij {salon?.Name}. Wil je een afspraak maken? Stuur ons een bericht!";
+                                await _whatsAppService.SendMessageAsync(entry.CustomerPhone, notifyMessage);
+                                entry.Notified = true;
+                            }
+                            catch { }
+                        }
+                        await _db.SaveChangesAsync();
+
+                        toolResult = $"Booking cancelled successfully. {waitlistEntries.Count} waitlist customers notified.";
+                    }
+                    else
+                    {
+                        toolResult = "No booking found for that date.";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to cancel booking");
+                    toolResult = $"Cancellation failed: {ex.Message}";
+                }
+            }
+            else if (toolName == "add_to_waitlist")
+            {
+                try
+                {
+                    var customerName = toolInput.GetProperty("customer_name").GetString()!;
+                    var customerPhone = toolInput.GetProperty("customer_phone").GetString()!;
+                    var preferredService = toolInput.GetProperty("preferred_service").GetString()!;
+                    var preferredStylist = toolInput.TryGetProperty("preferred_stylist", out var stylistProp) ? stylistProp.GetString()! : "";
+                    var preferredDay = toolInput.GetProperty("preferred_day").GetString()!;
+                    var dayOfWeek = Enum.TryParse<DayOfWeek>(preferredDay, true, out var day) ? day : DayOfWeek.Monday;
+
+                    var entry = new WaitlistEntry
+                    {
+                        SalonId = salonId,
+                        CustomerPhone = customerPhone,
+                        CustomerName = customerName,
+                        PreferredService = preferredService,
+                        PreferredStylist = preferredStylist,
+                        PreferredDay = dayOfWeek
+                    };
+
+                    _db.WaitlistEntries.Add(entry);
+                    await _db.SaveChangesAsync();
+
+                    toolResult = $"{customerName} added to waitlist for {preferredService} on {preferredDay}.";
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to add to waitlist");
+                    toolResult = $"Waitlist failed: {ex.Message}";
                 }
             }
 
@@ -239,62 +351,65 @@ await _db.SaveChangesAsync();
         }
 
         var reply = result.GetProperty("content")[0].GetProperty("text").GetString() ?? "Sorry, I couldn't process that.";
-_conversationHistory[customerNumber].Add(new { role = "assistant", content = reply });
+        _conversationHistory[customerNumber].Add(new { role = "assistant", content = reply });
 
-// Save reply to database
-var outgoingMsg = new Conversation
-{
-    PhoneNumber = customerNumber,
-    SalonId = salonId,
-    Role = "assistant",
-    Message = reply,
-    CreatedAt = DateTime.UtcNow
-};
-_db.Conversations.Add(outgoingMsg);
-await _db.SaveChangesAsync();
+        // Save reply to database
+        var outgoingMsg = new Conversation
+        {
+            PhoneNumber = customerNumber,
+            SalonId = salonId,
+            Role = "assistant",
+            Message = reply,
+            CreatedAt = DateTime.UtcNow
+        };
+        _db.Conversations.Add(outgoingMsg);
+        await _db.SaveChangesAsync();
 
-return reply;
+        return reply;
     }
 
     private string GetSalonSystemPrompt(string customerContext, Salon? salon)
-{
-    var today = DateTime.Now.ToString("dddd d MMMM yyyy");
-    var tomorrow = DateTime.Now.AddDays(1).ToString("dddd d MMMM yyyy");
+    {
+        var today = DateTime.Now.ToString("dddd d MMMM yyyy");
+        var tomorrow = DateTime.Now.AddDays(1).ToString("dddd d MMMM yyyy");
 
-    var salonName = salon?.Name ?? "Kapsalon Demo";
-    var address = salon?.Address ?? "Molenstraat 12, Nijmegen";
-    var hours = salon?.HoursText ?? "Monday-Friday 9:00-18:00, Saturday 9:00-16:00, Closed Sunday";
-    var services = salon?.ServicesText ?? "Knippen - €25 - 30 min\nKnippen + Wassen - €35 - 45 min\nVerven - €55 - 90 min\nHighlights - €65 - 90 min\nBaard trimmen - €15 - 15 min\nKinderen - €18 - 30 min";
-    var team = salon?.TeamText ?? "Sarah - Ma, Wo, Vr, Za\nKevin - Di, Do, Vr, Za";
+        var salonName = salon?.Name ?? "Kapsalon Demo";
+        var address = salon?.Address ?? "Molenstraat 12, Nijmegen";
+        var hours = salon?.HoursText ?? "Monday-Friday 9:00-18:00, Saturday 9:00-16:00, Closed Sunday";
+        var services = salon?.ServicesText ?? "Knippen - €25 - 30 min\nKnippen + Wassen - €35 - 45 min\nVerven - €55 - 90 min\nHighlights - €65 - 90 min\nBaard trimmen - €15 - 15 min\nKinderen - €18 - 30 min";
+        var team = salon?.TeamText ?? "Sarah - Ma, Wo, Vr, Za\nKevin - Di, Do, Vr, Za";
 
-    return $"""
-            You are Kappi, the AI receptionist for {salonName}.
+        return $"""
+                You are Kappi, the AI receptionist for {salonName}.
 
-            Today is {today}. Tomorrow is {tomorrow}.
-            You always know the current date. Never ask the customer what day it is.
+                Today is {today}. Tomorrow is {tomorrow}.
+                You always know the current date. Never ask the customer what day it is.
 
-            {customerContext}
+                {customerContext}
 
-            SALON INFO:
-            - Name: {salonName}
-            - Address: {address}
-            - Hours: {hours}
+                SALON INFO:
+                - Name: {salonName}
+                - Address: {address}
+                - Hours: {hours}
 
-            SERVICES & PRICES:
-            {services}
+                SERVICES & PRICES:
+                {services}
 
-            TEAM & AVAILABILITY:
-            {team}
+                TEAM & AVAILABILITY:
+                {team}
 
-            BOOKING RULES:
-            - If this is a returning customer, greet them by name warmly
-            - When a customer gives their name, date, time and service — call create_booking IMMEDIATELY
-            - Do NOT ask for confirmation before calling the tool
-            - If the stylist works on that day and the time is within salon hours — BOOK IT
-            - After the tool succeeds, confirm the booking details to the customer
-            - If the tool result mentions a loyalty milestone, congratulate them and mention a reward
-            - Respond in the same language the customer uses (Dutch or English)
-            - Be friendly and concise — this is WhatsApp, not email
-            """;
-}
+                BOOKING RULES:
+                - If this is a returning customer, greet them by name warmly
+                - When a customer gives their name, date, time and service — call create_booking IMMEDIATELY
+                - Do NOT ask for confirmation before calling the tool
+                - If the stylist works on that day and the time is within salon hours — BOOK IT
+                - After the tool succeeds, confirm the booking details to the customer
+                - If the tool result mentions a loyalty milestone, congratulate them and mention a reward
+                - When a customer wants to cancel, call cancel_booking immediately
+                - When a customer asks to be on a waitlist, call add_to_waitlist immediately
+                - When cancellation succeeds, tell the customer it is cancelled and wish them well
+                - Respond in the same language the customer uses (Dutch or English)
+                - Be friendly and concise — this is WhatsApp, not email
+                """;
+    }
 }

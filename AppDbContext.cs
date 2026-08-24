@@ -11,6 +11,7 @@ public class AppDbContext : DbContext
     public DbSet<Booking> Bookings => Set<Booking>();
     public DbSet<Conversation> Conversations => Set<Conversation>();
     public DbSet<SalonOwner> SalonOwners => Set<SalonOwner>();
+    public DbSet<WaitlistEntry> WaitlistEntries => Set<WaitlistEntry>();
 }
 
 public class Salon
@@ -79,4 +80,17 @@ public class SalonOwner
     public string PasswordHash { get; set; } = string.Empty;
     public int SalonId { get; set; }
     public Salon Salon { get; set; } = null!;
+}
+public class WaitlistEntry
+{
+    public int Id { get; set; }
+    public int SalonId { get; set; }
+    public Salon Salon { get; set; } = null!;
+    public string CustomerPhone { get; set; } = string.Empty;
+    public string CustomerName { get; set; } = string.Empty;
+    public string PreferredService { get; set; } = string.Empty;
+    public string PreferredStylist { get; set; } = string.Empty;
+    public DayOfWeek PreferredDay { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public bool Notified { get; set; } = false;
 }
