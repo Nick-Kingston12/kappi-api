@@ -19,15 +19,14 @@ public class ClaudeService : IClaudeService
    
     private static readonly Dictionary<string, List<object>> _conversationHistory = new();
 
-    public ClaudeService(IConfiguration config, IHttpClientFactory httpClientFactory, ILogger<ClaudeService> logger, AppDbContext db, IGoogleCalendarService calendarService, IWhatsAppService whatsAppService)
-    {
-        _config = config;
-        _httpClientFactory = httpClientFactory;
-        _logger = logger;
-        _db = db;
-        _calendarService = calendarService;
-        
-    }
+   public ClaudeService(IConfiguration config, IHttpClientFactory httpClientFactory, ILogger<ClaudeService> logger, AppDbContext db, IGoogleCalendarService calendarService)
+{
+    _config = config;
+    _httpClientFactory = httpClientFactory;
+    _logger = logger;
+    _db = db;
+    _calendarService = calendarService;
+}
 
     public async Task<string> GetBookingReplyAsync(string customerNumber, string message, int salonId)
     {
