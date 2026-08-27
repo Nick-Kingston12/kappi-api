@@ -93,4 +93,16 @@ public async Task<IActionResult> Debug()
         accessTokenPreview = salon?.GoogleAccessToken?.Substring(0, 20) + "..."
     });
 }
+[HttpGet("fix-bookings")]
+[AllowAnonymous]
+public async Task<IActionResult> FixBookings()
+{
+    var bookings = await _db.Bookings.Where(b => b.CustomerPhone == null).ToListAsync();
+    foreach (var booking in bookings)
+    {
+        booking.CustomerPhone = "whatsapp:+31611792610";
+    }
+    await _db.SaveChangesAsync();
+    return Ok(new { fixed_count = bookings.Count });
+}
 }
