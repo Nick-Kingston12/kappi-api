@@ -90,20 +90,19 @@ public class ClaudeService : IClaudeService
                 }
             },
             new
-            {
-                name = "cancel_booking",
-                description = "Cancel an existing appointment when a customer requests cancellation.",
-                input_schema = new
-                {
-                    type = "object",
-                    properties = new
-                    {
-                        customer_phone = new { type = "string", description = "Customer phone number" },
-                        appointment_date = new { type = "string", description = "Date of appointment in yyyy-MM-dd format" }
-                    },
-                    required = new[] { "customer_phone" }
-                }
-            },
+{
+    name = "cancel_booking",
+    description = "Cancel an existing appointment when a customer requests cancellation. The system already knows the customer's phone number automatically — never ask the customer for it.",
+    input_schema = new
+    {
+        type = "object",
+        properties = new
+        {
+            appointment_date = new { type = "string", description = "Date of appointment in yyyy-MM-dd format, if the customer specifies one" }
+        },
+        required = new string[] { }
+    }
+},
             new
             {
                 name = "add_to_waitlist",
