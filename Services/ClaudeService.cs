@@ -220,28 +220,24 @@ public class ClaudeService : IClaudeService
                 }
             }
             else if (toolName == "cancel_booking")
-            {
-                try
-                {
-                    var customerPhone = toolInput.GetProperty("customer_phone").GetString()!;
-                    var appointmentDate = toolInput.GetProperty("appointment_date").GetString()!;
-                    var date = DateTime.SpecifyKind(DateTime.Parse(appointmentDate), DateTimeKind.Utc);
-
-var normalizedPhone = customerNumber.Replace("whatsapp:", "");
-var booking = await _db.Bookings.FirstOrDefaultAsync(b =>
-    b.SalonId == salonId &&
-    (b.CustomerPhone == customerNumber ||
-     b.CustomerPhone == $"whatsapp:{normalizedPhone}" ||
-     b.CustomerPhone!.Contains(normalizedPhone)) &&
-    b.Status == "confirmed");
-
-if (booking == null)
 {
-    booking = await _db.Bookings
-        .Where(b => b.SalonId == salonId && b.Status == "confirmed" && b.AppointmentDate > DateTime.UtcNow)
-        .OrderBy(b => b.AppointmentDate)
-        .FirstOrDefaultAsync();
-}
+    try
+    {
+        var normalizedPhone = customerNumber.Replace("whatsapp:", "");
+        var booking = await _db.Bookings.FirstOrDefaultAsync(b =>
+            b.SalonId == salonId &&
+            (b.CustomerPhone == customerNumber ||
+             b.CustomerPhone == $"whatsapp:{normalizedPhone}" ||
+             b.CustomerPhone!.Contains(normalizedPhone)) &&
+            b.Status == "confirmed");
+
+        if (booking == null)
+        {
+            booking = await _db.Bookings
+                .Where(b => b.SalonId == salonId && b.Status == "confirmed" && b.AppointmentDate > DateTime.UtcNow)
+                .OrderBy(b => b.AppointmentDate)
+                .FirstOrDefaultAsync();
+        }
                     if (booking != null)
                     {
                         booking.Status = "cancelled";
