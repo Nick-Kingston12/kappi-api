@@ -23,7 +23,7 @@ public class BookingsController : ControllerBase
         var salonId = int.Parse(User.FindFirst("salonId")!.Value);
 
         var bookings = await _db.Bookings
-            .Where(b => b.SalonId == salonId)
+            .Where(b => b.SalonId == salonId && b.Status != "cancelled")
             .OrderBy(b => b.AppointmentDate)
             .Select(b => new
             {
@@ -32,7 +32,8 @@ public class BookingsController : ControllerBase
                 b.Stylist,
                 b.AppointmentDate,
                 b.Status,
-                b.CreatedAt
+                b.CreatedAt,
+                b.CustomerPhone
             })
             .ToListAsync();
 
@@ -51,5 +52,29 @@ public class BookingsController : ControllerBase
         var totalCount = await _db.Bookings.CountAsync(b => b.SalonId == salonId);
 
         return Ok(new { todayCount, weekCount, totalCount });
+    }
+
+    [HttpPatch("{id}/no-show")]
+    public async Task<IActionResult> MarkNoShow(int id)
+    {
+        var salonId = int.Parse(User.FindFirst("salonId")!.Value);
+        var booking = await _db.Bookings
+            .FirstOrDefaultAsync(b => b.Id == id && b.SalonId == salonId);
+
+        if (booking == null)
+            return NotFound();
+
+        booking.Status = "no-show";
+
+        if (booking.CustomerPhone != null)
+        {
+            var customer = await _db.Customers
+                .FirstOrDefaultAsync(c => c.PhoneNumber == booking.CustomerPhone && c.SalonId == salonId);
+            if (customer != null)
+                customer.NoShowCount += 1;
+        }
+
+        await _db.SaveChangesAsync();
+        return Ok(new { booking.Id, booking.Status });
     }
 }

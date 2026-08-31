@@ -16,17 +16,17 @@ public class ClaudeService : IClaudeService
     private readonly ILogger<ClaudeService> _logger;
     private readonly AppDbContext _db;
     private readonly IGoogleCalendarService _calendarService;
-   
+
     private static readonly Dictionary<string, List<object>> _conversationHistory = new();
 
-   public ClaudeService(IConfiguration config, IHttpClientFactory httpClientFactory, ILogger<ClaudeService> logger, AppDbContext db, IGoogleCalendarService calendarService)
-{
-    _config = config;
-    _httpClientFactory = httpClientFactory;
-    _logger = logger;
-    _db = db;
-    _calendarService = calendarService;
-}
+    public ClaudeService(IConfiguration config, IHttpClientFactory httpClientFactory, ILogger<ClaudeService> logger, AppDbContext db, IGoogleCalendarService calendarService)
+    {
+        _config = config;
+        _httpClientFactory = httpClientFactory;
+        _logger = logger;
+        _db = db;
+        _calendarService = calendarService;
+    }
 
     public async Task<string> GetBookingReplyAsync(string customerNumber, string message, int salonId)
     {
@@ -35,7 +35,6 @@ public class ClaudeService : IClaudeService
 
         _conversationHistory[customerNumber].Add(new { role = "user", content = message });
 
-        // Save message to database
         var incomingMsg = new Conversation
         {
             PhoneNumber = customerNumber,
@@ -49,7 +48,6 @@ public class ClaudeService : IClaudeService
 
         var salon = await _db.Salons.FindAsync(salonId);
 
-        // Find or create customer profile
         var customer = await _db.Customers.FirstOrDefaultAsync(c => c.PhoneNumber == customerNumber && c.SalonId == salonId);
         if (customer == null)
         {
@@ -64,8 +62,12 @@ public class ClaudeService : IClaudeService
             await _db.SaveChangesAsync();
         }
 
+        var noShowWarning = customer.NoShowCount >= 2
+            ? $"\n⚠️ WARNING: This customer has {customer.NoShowCount} no-shows. Politely mention that a deposit or confirmation may be required for this booking, per salon policy."
+            : "";
+
         var customerContext = customer.Name != ""
-            ? $"\nRETURNING CUSTOMER: {customer.Name} | Preferred stylist: {customer.PreferredStylist ?? "no preference"} | Preferred service: {customer.PreferredService ?? "unknown"} | Total bookings: {customer.TotalBookings} | Last visit: {(customer.LastVisit.HasValue ? customer.LastVisit.Value.ToString("d MMMM yyyy") : "first time")}"
+            ? $"\nRETURNING CUSTOMER: {customer.Name} | Preferred stylist: {customer.PreferredStylist ?? "no preference"} | Preferred service: {customer.PreferredService ?? "unknown"} | Total bookings: {customer.TotalBookings} | Last visit: {(customer.LastVisit.HasValue ? customer.LastVisit.Value.ToString("d MMMM yyyy") : "first time")}{noShowWarning}"
             : "\nNEW CUSTOMER: No profile yet. When they give their name, remember it.";
 
         var tools = new object[]
@@ -90,19 +92,19 @@ public class ClaudeService : IClaudeService
                 }
             },
             new
-{
-    name = "cancel_booking",
-    description = "Cancel an existing appointment when a customer requests cancellation. The system already knows the customer's phone number automatically — never ask the customer for it.",
-    input_schema = new
-    {
-        type = "object",
-        properties = new
-        {
-            appointment_date = new { type = "string", description = "Date of appointment in yyyy-MM-dd format, if the customer specifies one" }
-        },
-        required = new string[] { }
-    }
-},
+            {
+                name = "cancel_booking",
+                description = "Cancel an existing appointment when a customer requests cancellation. The system already knows the customer's phone number automatically — never ask the customer for it.",
+                input_schema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        appointment_date = new { type = "string", description = "Date of appointment in yyyy-MM-dd format, if the customer specifies one" }
+                    },
+                    required = new string[] { }
+                }
+            },
             new
             {
                 name = "add_to_waitlist",
@@ -195,7 +197,8 @@ public class ClaudeService : IClaudeService
                         Stylist = stylist,
                         AppointmentDate = appointmentStart,
                         Status = "confirmed",
-                        CustomerPhone = customerNumber
+                        CustomerPhone = customerNumber,
+                        EventId = eventId
                     };
                     _db.Bookings.Add(booking);
 
@@ -220,63 +223,88 @@ public class ClaudeService : IClaudeService
                 }
             }
             else if (toolName == "cancel_booking")
-{
-    try
-    {
-        var normalizedPhone = customerNumber.Replace("whatsapp:", "");
-        var booking = await _db.Bookings.FirstOrDefaultAsync(b =>
-            b.SalonId == salonId &&
-            (b.CustomerPhone == customerNumber ||
-             b.CustomerPhone == $"whatsapp:{normalizedPhone}" ||
-             b.CustomerPhone!.Contains(normalizedPhone)) &&
-            b.Status == "confirmed");
+            {
+                try
+                {
+                    var normalizedPhone = customerNumber.Replace("whatsapp:", "");
+                    var booking = await _db.Bookings.FirstOrDefaultAsync(b =>
+                        b.SalonId == salonId &&
+                        (b.CustomerPhone == customerNumber ||
+                         b.CustomerPhone == $"whatsapp:{normalizedPhone}" ||
+                         b.CustomerPhone!.Contains(normalizedPhone)) &&
+                        b.Status == "confirmed");
 
-        if (booking == null)
-        {
-            booking = await _db.Bookings
-                .Where(b => b.SalonId == salonId && b.Status == "confirmed" && b.AppointmentDate > DateTime.UtcNow)
-                .OrderBy(b => b.AppointmentDate)
-                .FirstOrDefaultAsync();
-        }
+                    if (booking == null)
+                    {
+                        booking = await _db.Bookings
+                            .Where(b => b.SalonId == salonId && b.Status == "confirmed" && b.AppointmentDate > DateTime.UtcNow)
+                            .OrderBy(b => b.AppointmentDate)
+                            .FirstOrDefaultAsync();
+                    }
+
                     if (booking != null)
                     {
                         booking.Status = "cancelled";
+
+                        if (!string.IsNullOrEmpty(booking.EventId) && booking.EventId != "saved" && salon?.GoogleAccessToken != null)
+                        {
+                            try
+                            {
+                                if (salon.GoogleRefreshToken != null)
+                                    salon.GoogleAccessToken = await _calendarService.RefreshAccessToken(salon.GoogleRefreshToken);
+
+                                await _calendarService.DeleteBooking(salon.GoogleAccessToken, booking.EventId);
+                            }
+                            catch (Exception calEx)
+                            {
+                                _logger.LogError(calEx, "Failed to delete calendar event for booking {BookingId}", booking.Id);
+                            }
+                        }
+
                         await _db.SaveChangesAsync();
 
-                        // Notify waitlist
-                        var waitlistEntries = await _db.WaitlistEntries
-                            .Where(w => w.SalonId == salonId && !w.Notified)
-                            .ToListAsync();
+                        var waitlistCount = 0;
+                        try
+                        {
+                            var waitlistEntries = await _db.WaitlistEntries
+                                .Where(w => w.SalonId == salonId && !w.Notified)
+                                .ToListAsync();
 
-                        foreach (var entry in waitlistEntries)
-{
-    try
-    {
-        var notifyMessage = $"Goed nieuws {entry.CustomerName}! 🎉 Er is een plek vrijgekomen bij {salon?.Name}. Wil je een afspraak maken? Stuur ons een bericht!";
-        
-        var twilioSid = _config["Twilio__AccountSid"];
-        var twilioToken = _config["Twilio__AuthToken"];
-        var twilioFrom = _config["Twilio__WhatsAppNumber"];
+                            foreach (var entry in waitlistEntries)
+                            {
+                                try
+                                {
+                                    var notifyMessage = $"Goed nieuws {entry.CustomerName}! 🎉 Er is een plek vrijgekomen bij {salon?.Name}. Wil je een afspraak maken? Stuur ons een bericht!";
 
-        using var twilioClient = new HttpClient();
-        var authBytes = System.Text.Encoding.ASCII.GetBytes($"{twilioSid}:{twilioToken}");
-        twilioClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+                                    var twilioSid = _config["Twilio__AccountSid"];
+                                    var twilioToken = _config["Twilio__AuthToken"];
+                                    var twilioFrom = _config["Twilio__WhatsAppNumber"];
 
-        var twilioContent = new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["From"] = twilioFrom!,
-            ["To"] = entry.CustomerPhone,
-            ["Body"] = notifyMessage
-        });
+                                    using var twilioClient = new HttpClient();
+                                    var authBytes = System.Text.Encoding.ASCII.GetBytes($"{twilioSid}:{twilioToken}");
+                                    twilioClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
 
-        await twilioClient.PostAsync($"https://api.twilio.com/2010-04-01/Accounts/{twilioSid}/Messages.json", twilioContent);
-        entry.Notified = true;
-    }
-    catch { }
-}
-await _db.SaveChangesAsync();
+                                    var twilioContent = new FormUrlEncodedContent(new Dictionary<string, string>
+                                    {
+                                        ["From"] = twilioFrom!,
+                                        ["To"] = entry.CustomerPhone,
+                                        ["Body"] = notifyMessage
+                                    });
 
-toolResult = $"Booking cancelled successfully. {waitlistEntries.Count} waitlist customers notified.";
+                                    await twilioClient.PostAsync($"https://api.twilio.com/2010-04-01/Accounts/{twilioSid}/Messages.json", twilioContent);
+                                    entry.Notified = true;
+                                }
+                                catch { }
+                            }
+                            await _db.SaveChangesAsync();
+                            waitlistCount = waitlistEntries.Count;
+                        }
+                        catch (Exception waitlistEx)
+                        {
+                            _logger.LogError(waitlistEx, "Waitlist notification failed after successful cancellation");
+                        }
+
+                        toolResult = $"Booking cancelled successfully. {waitlistCount} waitlist customers notified.";
                     }
                     else
                     {
@@ -371,7 +399,6 @@ toolResult = $"Booking cancelled successfully. {waitlistEntries.Count} waitlist 
         var reply = result.GetProperty("content")[0].GetProperty("text").GetString() ?? "Sorry, I couldn't process that.";
         _conversationHistory[customerNumber].Add(new { role = "assistant", content = reply });
 
-        // Save reply to database
         var outgoingMsg = new Conversation
         {
             PhoneNumber = customerNumber,
@@ -423,6 +450,7 @@ toolResult = $"Booking cancelled successfully. {waitlistEntries.Count} waitlist 
                 - If the stylist works on that day and the time is within salon hours — BOOK IT
                 - After the tool succeeds, confirm the booking details to the customer
                 - If the tool result mentions a loyalty milestone, congratulate them and mention a reward
+                - If a customer has 2 or more no-shows, mention politely that a deposit may be required before confirming, but still create the booking with create_booking
                 - When a customer wants to cancel, call cancel_booking immediately
                 - When a customer asks to be on a waitlist, call add_to_waitlist immediately
                 - When cancellation succeeds, tell the customer it is cancelled and wish them well

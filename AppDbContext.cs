@@ -45,13 +45,15 @@ public class Customer
     public int SalonId { get; set; }
     public Salon Salon { get; set; } = null!;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public int NoShowCount { get; set; } = 0;
+    public string? Notes { get; set; }
 }
 
 public class Booking
 {
     public int Id { get; set; }
     public int? CustomerId { get; set; }
-public Customer? Customer { get; set; }
+    public Customer? Customer { get; set; }
     public int SalonId { get; set; }
     public Salon Salon { get; set; } = null!;
     public string Service { get; set; } = string.Empty;
@@ -60,7 +62,8 @@ public Customer? Customer { get; set; }
     public string Status { get; set; } = "confirmed";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public bool ReminderSent { get; set; } = false;
-public string? CustomerPhone { get; set; }
+    public string? CustomerPhone { get; set; }
+    public string? EventId { get; set; }
 }
 
 public class Conversation
@@ -72,6 +75,7 @@ public class Conversation
     public string Message { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
+
 public class SalonOwner
 {
     public int Id { get; set; }
@@ -81,6 +85,7 @@ public class SalonOwner
     public int SalonId { get; set; }
     public Salon Salon { get; set; } = null!;
 }
+
 public class WaitlistEntry
 {
     public int Id { get; set; }
