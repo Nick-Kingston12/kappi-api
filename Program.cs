@@ -42,6 +42,7 @@ builder.Services.AddScoped<IWhatsAppService, WhatsAppService>();
 builder.Services.AddScoped<IClaudeService, ClaudeService>();
 builder.Services.AddScoped<IGoogleCalendarService, GoogleCalendarService>();
 builder.Services.AddScoped<IReminderService, ReminderService>();
+builder.Services.AddScoped<IEngagementService, EngagementService>();
 
 // CORS
 builder.Services.AddCors(options =>
@@ -74,6 +75,23 @@ RecurringJob.AddOrUpdate<IReminderService>(
     "send-appointment-reminders",
     service => service.SendRemindersAsync(),
     "0 * * * *"
+);
+RecurringJob.AddOrUpdate<IEngagementService>(
+    "send-review-requests",
+    service => service.SendReviewRequestsAsync(),
+    "0 * * * *"
+);
+
+RecurringJob.AddOrUpdate<IEngagementService>(
+    "send-birthday-messages",
+    service => service.SendBirthdayMessagesAsync(),
+    "0 9 * * *"
+);
+
+RecurringJob.AddOrUpdate<IEngagementService>(
+    "send-rebooking-suggestions",
+    service => service.SendRebookingSuggestionsAsync(),
+    "0 10 * * *"
 );
 
 app.Run();

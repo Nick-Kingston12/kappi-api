@@ -30,6 +30,7 @@ public class Salon
     public string? GoogleAccessToken { get; set; }
     public string? GoogleRefreshToken { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public string? GoogleReviewUrl { get; set; }
 }
 
 public class Customer
@@ -47,6 +48,9 @@ public class Customer
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public int NoShowCount { get; set; } = 0;
     public string? Notes { get; set; }
+    public DateTime? Birthday { get; set; }
+    public int? LastBirthdayMessageYear { get; set; }
+    public DateTime? LastRebookingNudgeSent { get; set; }
 }
 
 public class Booking
@@ -64,6 +68,7 @@ public class Booking
     public bool ReminderSent { get; set; } = false;
     public string? CustomerPhone { get; set; }
     public string? EventId { get; set; }
+    public bool ReviewRequestSent { get; set; } = false;
 }
 
 public class Conversation

@@ -51,12 +51,12 @@ public class ReminderService : IReminderService
                               $"Tot morgen! 😊";
 
                 if (!string.IsNullOrEmpty(booking.CustomerPhone))
-                {
-                    await _whatsAppService.SendMessageAsync($"whatsapp:{booking.CustomerPhone}", message);
-                    booking.ReminderSent = true;
-                    await _db.SaveChangesAsync();
-                    _logger.LogInformation("Reminder sent for booking {Id}", booking.Id);
-                }
+{
+    await _whatsAppService.SendMessageAsync(booking.CustomerPhone!, message);
+    booking.ReminderSent = true;
+    await _db.SaveChangesAsync();
+    _logger.LogInformation("Reminder sent for booking {Id}", booking.Id);
+}
             }
             catch (Exception ex)
             {
