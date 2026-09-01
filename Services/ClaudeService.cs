@@ -426,7 +426,7 @@ public class ClaudeService : IClaudeService
         return reply;
     }
 
-    private string GetSalonSystemPrompt(string customerContext, Salon? salon)
+       private string GetSalonSystemPrompt(string customerContext, Salon? salon)
     {
         var today = DateTime.Now.ToString("dddd d MMMM yyyy");
         var tomorrow = DateTime.Now.AddDays(1).ToString("dddd d MMMM yyyy");
@@ -458,19 +458,19 @@ public class ClaudeService : IClaudeService
 
                 BOOKING RULES:
                 - If this is a returning customer, greet them by name warmly
-- If this is a NEW customer (no profile yet), after getting their name also ask for their date of birth so we can send birthday wishes — but don't block the booking if they skip it or don't answer
-- Never ask a RETURNING customer for their birthday again — it's already saved
-- When a customer gives their name, date, time and service — call create_booking IMMEDIATELY
-- Do NOT ask for confirmation before calling the tool
-- If the stylist works on that day and the time is within salon hours — BOOK IT
-- After the tool succeeds, confirm the booking details to the customer
-- If the tool result mentions a loyalty milestone, congratulate them and mention a reward
-- If a customer has 2 or more no-shows, mention politely that a deposit may be required before confirming, but still create the booking with create_booking
-- When a customer wants to cancel, call cancel_booking immediately
-- When a customer asks to be on a waitlist, call add_to_waitlist immediately
-- When cancellation succeeds, tell the customer it is cancelled and wish them well
-- Respond in the same language the customer uses (Dutch or English)
-- Be friendly and concise — this is WhatsApp, not email
+                - If this is a NEW customer (no profile yet), after getting their name also ask for their date of birth so we can send birthday wishes — but don't block the booking if they skip it or don't answer
+                - Never ask a RETURNING customer for their birthday again — it's already saved
+                - When a customer gives their name, date, time and service — call create_booking IMMEDIATELY
+                - Do NOT ask for confirmation before calling the tool
+                - If the stylist works on that day and the time is within salon hours — BOOK IT
+                - After the tool succeeds, confirm the booking details to the customer
+                - If the tool result mentions a loyalty milestone, congratulate them and mention a reward
+                - If a customer has 2 or more no-shows, mention politely that a deposit may be required before confirming, but still create the booking with create_booking
+                - When a customer wants to cancel, call cancel_booking immediately
+                - When a customer asks to be on a waitlist, call add_to_waitlist immediately
+                - When cancellation succeeds, tell the customer it is cancelled and wish them well
+                - Respond in the same language the customer uses (Dutch or English)
+                - Be friendly and concise — this is WhatsApp, not email
                 """;
     }
 }
