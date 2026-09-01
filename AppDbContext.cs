@@ -69,6 +69,7 @@ public class Booking
     public string? CustomerPhone { get; set; }
     public string? EventId { get; set; }
     public bool ReviewRequestSent { get; set; } = false;
+    public decimal Price { get; set; } = 0;
 }
 
 public class Conversation

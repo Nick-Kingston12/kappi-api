@@ -73,24 +73,26 @@ public class ClaudeService : IClaudeService
         var tools = new object[]
         {
             new
-            {
-                name = "create_booking",
-                description = "Create an appointment in the salon calendar. Call this as soon as you have the customer name, service, stylist, date and time. Do not wait for additional confirmation.",
-                input_schema = new
-                {
-                    type = "object",
-                    properties = new
-                    {
-                        customer_name = new { type = "string", description = "Full name of the customer" },
-                        service = new { type = "string", description = "Service being booked e.g. Knippen, Highlights" },
-                        stylist = new { type = "string", description = "Name of the stylist" },
-                        date = new { type = "string", description = "Date in yyyy-MM-dd format" },
-                        time = new { type = "string", description = "Time in HH:mm format" },
-                        duration_minutes = new { type = "integer", description = "Duration in minutes. Knippen=30, Knippen+Wassen=45, Verven=90, Highlights=90, Baard=15" }
-                    },
-                    required = new[] { "customer_name", "service", "stylist", "date", "time", "duration_minutes" }
-                }
-            },
+{
+    name = "create_booking",
+    description = "Create an appointment in the salon calendar. Call this as soon as you have the customer name, service, stylist, date and time. Do not wait for additional confirmation.",
+    input_schema = new
+    {
+        type = "object",
+        properties = new
+        {
+            customer_name = new { type = "string", description = "Full name of the customer" },
+            service = new { type = "string", description = "Service being booked e.g. Knippen, Highlights" },
+            stylist = new { type = "string", description = "Name of the stylist" },
+            date = new { type = "string", description = "Date in yyyy-MM-dd format" },
+            time = new { type = "string", description = "Time in HH:mm format" },
+            duration_minutes = new { type = "integer", description = "Duration in minutes. Knippen=30, Knippen+Wassen=45, Verven=90, Highlights=90, Baard=15" },
+            price = new { type = "number", description = "Price in euros for this service, based on the salon's price list" },
+            customer_birthday = new { type = "string", description = "Customer's date of birth in yyyy-MM-dd format, only if this is a new customer and they provided it" }
+        },
+        required = new[] { "customer_name", "service", "stylist", "date", "time", "duration_minutes", "price" }
+    }
+},
             new
             {
                 name = "cancel_booking",
@@ -169,6 +171,7 @@ public class ClaudeService : IClaudeService
                     var date = toolInput.GetProperty("date").GetString()!;
                     var time = toolInput.GetProperty("time").GetString()!;
                     var duration = toolInput.GetProperty("duration_minutes").GetInt32();
+                    var price = toolInput.GetProperty("price").GetDecimal();
                     var amsterdamZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Amsterdam");
                     var localTime = DateTime.Parse($"{date} {time}");
                     var appointmentStart = TimeZoneInfo.ConvertTimeToUtc(localTime, amsterdamZone);
@@ -198,7 +201,8 @@ public class ClaudeService : IClaudeService
                         AppointmentDate = appointmentStart,
                         Status = "confirmed",
                         CustomerPhone = customerNumber,
-                        EventId = eventId
+                        EventId = eventId,
+                        Price = price
                     };
                     _db.Bookings.Add(booking);
 
@@ -207,6 +211,15 @@ public class ClaudeService : IClaudeService
                     customer.PreferredService = service;
                     customer.TotalBookings += 1;
                     customer.LastVisit = appointmentStart;
+
+                    if (customer.Birthday == null && toolInput.TryGetProperty("customer_birthday", out var birthdayProp))
+{
+    var birthdayStr = birthdayProp.GetString();
+    if (!string.IsNullOrEmpty(birthdayStr) && DateTime.TryParse(birthdayStr, out var parsedBirthday))
+    {
+        customer.Birthday = DateTime.SpecifyKind(parsedBirthday, DateTimeKind.Utc);
+    }
+}
 
                     await _db.SaveChangesAsync();
 
@@ -445,17 +458,19 @@ public class ClaudeService : IClaudeService
 
                 BOOKING RULES:
                 - If this is a returning customer, greet them by name warmly
-                - When a customer gives their name, date, time and service — call create_booking IMMEDIATELY
-                - Do NOT ask for confirmation before calling the tool
-                - If the stylist works on that day and the time is within salon hours — BOOK IT
-                - After the tool succeeds, confirm the booking details to the customer
-                - If the tool result mentions a loyalty milestone, congratulate them and mention a reward
-                - If a customer has 2 or more no-shows, mention politely that a deposit may be required before confirming, but still create the booking with create_booking
-                - When a customer wants to cancel, call cancel_booking immediately
-                - When a customer asks to be on a waitlist, call add_to_waitlist immediately
-                - When cancellation succeeds, tell the customer it is cancelled and wish them well
-                - Respond in the same language the customer uses (Dutch or English)
-                - Be friendly and concise — this is WhatsApp, not email
+- If this is a NEW customer (no profile yet), after getting their name also ask for their date of birth so we can send birthday wishes — but don't block the booking if they skip it or don't answer
+- Never ask a RETURNING customer for their birthday again — it's already saved
+- When a customer gives their name, date, time and service — call create_booking IMMEDIATELY
+- Do NOT ask for confirmation before calling the tool
+- If the stylist works on that day and the time is within salon hours — BOOK IT
+- After the tool succeeds, confirm the booking details to the customer
+- If the tool result mentions a loyalty milestone, congratulate them and mention a reward
+- If a customer has 2 or more no-shows, mention politely that a deposit may be required before confirming, but still create the booking with create_booking
+- When a customer wants to cancel, call cancel_booking immediately
+- When a customer asks to be on a waitlist, call add_to_waitlist immediately
+- When cancellation succeeds, tell the customer it is cancelled and wish them well
+- Respond in the same language the customer uses (Dutch or English)
+- Be friendly and concise — this is WhatsApp, not email
                 """;
     }
 }
