@@ -18,6 +18,7 @@ public class ClaudeService : IClaudeService
     private readonly IGoogleCalendarService _calendarService;
 
     private static readonly Dictionary<string, List<object>> _conversationHistory = new();
+    private const int BufferMinutes = 15;
 
     public ClaudeService(IConfiguration config, IHttpClientFactory httpClientFactory, ILogger<ClaudeService> logger, AppDbContext db, IGoogleCalendarService calendarService)
     {
@@ -26,6 +27,28 @@ public class ClaudeService : IClaudeService
         _logger = logger;
         _db = db;
         _calendarService = calendarService;
+    }
+
+    private async Task<bool> HasConflictAsync(int salonId, string stylist, DateTime start, int durationMinutes, int? excludeBookingId = null)
+    {
+        var bufferedStart = start.AddMinutes(-BufferMinutes);
+        var bufferedEnd = start.AddMinutes(durationMinutes + BufferMinutes);
+
+        var existingBookings = await _db.Bookings
+            .Where(b => b.SalonId == salonId
+                        && b.Stylist == stylist
+                        && b.Status == "confirmed"
+                        && (excludeBookingId == null || b.Id != excludeBookingId))
+            .ToListAsync();
+
+        foreach (var b in existingBookings)
+        {
+            var existingStart = b.AppointmentDate;
+            var existingEnd = b.AppointmentDate.AddMinutes(b.DurationMinutes);
+            if (bufferedStart < existingEnd && bufferedEnd > existingStart)
+                return true;
+        }
+        return false;
     }
 
     public async Task<string> GetBookingReplyAsync(string customerNumber, string message, int salonId)
@@ -73,26 +96,41 @@ public class ClaudeService : IClaudeService
         var tools = new object[]
         {
             new
-{
-    name = "create_booking",
-    description = "Create an appointment in the salon calendar. Call this as soon as you have the customer name, service, stylist, date and time. Do not wait for additional confirmation.",
-    input_schema = new
-    {
-        type = "object",
-        properties = new
-        {
-            customer_name = new { type = "string", description = "Full name of the customer" },
-            service = new { type = "string", description = "Service being booked e.g. Knippen, Highlights" },
-            stylist = new { type = "string", description = "Name of the stylist" },
-            date = new { type = "string", description = "Date in yyyy-MM-dd format" },
-            time = new { type = "string", description = "Time in HH:mm format" },
-            duration_minutes = new { type = "integer", description = "Duration in minutes. Knippen=30, Knippen+Wassen=45, Verven=90, Highlights=90, Baard=15" },
-            price = new { type = "number", description = "Price in euros for this service, based on the salon's price list" },
-            customer_birthday = new { type = "string", description = "Customer's date of birth in yyyy-MM-dd format, only if this is a new customer and they provided it" }
-        },
-        required = new[] { "customer_name", "service", "stylist", "date", "time", "duration_minutes", "price" }
-    }
-},
+            {
+                name = "create_booking",
+                description = "Create an appointment in the salon calendar. Call this as soon as you have the customer name, service, stylist, date and time. Do not wait for additional confirmation. If the tool result says the slot is unavailable, suggest a different time to the customer or offer the waitlist — do not retry the same time.",
+                input_schema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        customer_name = new { type = "string", description = "Full name of the customer" },
+                        service = new { type = "string", description = "Service being booked e.g. Knippen, Highlights" },
+                        stylist = new { type = "string", description = "Name of the stylist" },
+                        date = new { type = "string", description = "Date in yyyy-MM-dd format" },
+                        time = new { type = "string", description = "Time in HH:mm format" },
+                        duration_minutes = new { type = "integer", description = "Duration in minutes. Knippen=30, Knippen+Wassen=45, Verven=90, Highlights=90, Baard=15" },
+                        price = new { type = "number", description = "Price in euros for this service, based on the salon's price list" },
+                        customer_birthday = new { type = "string", description = "Customer's date of birth in yyyy-MM-dd format, only if this is a new customer and they provided it" }
+                    },
+                    required = new[] { "customer_name", "service", "stylist", "date", "time", "duration_minutes", "price" }
+                }
+            },
+            new
+            {
+                name = "reschedule_booking",
+                description = "Move an existing appointment to a new date/time when the customer asks to reschedule. The system already knows which booking and which customer automatically. If the tool result says the new slot is unavailable, suggest a different time — do not retry the same one.",
+                input_schema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        new_date = new { type = "string", description = "New date in yyyy-MM-dd format" },
+                        new_time = new { type = "string", description = "New time in HH:mm format" }
+                    },
+                    required = new[] { "new_date", "new_time" }
+                }
+            },
             new
             {
                 name = "cancel_booking",
@@ -175,64 +213,141 @@ public class ClaudeService : IClaudeService
                     var amsterdamZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Amsterdam");
                     var localTime = DateTime.Parse($"{date} {time}");
                     var appointmentStart = TimeZoneInfo.ConvertTimeToUtc(localTime, amsterdamZone);
-                    var summary = $"{service} - {customerName} (via Kappi AI)";
 
-                    string eventId = "saved";
-                    if (salon?.GoogleAccessToken != null)
+                    var conflict = await HasConflictAsync(salonId, stylist, appointmentStart, duration);
+                    if (conflict)
                     {
-                        if (salon.GoogleRefreshToken != null)
-                            salon.GoogleAccessToken = await _calendarService.RefreshAccessToken(salon.GoogleRefreshToken);
-
-                        eventId = await _calendarService.CreateBooking(
-                            salon.GoogleAccessToken,
-                            summary,
-                            appointmentStart,
-                            duration,
-                            ""
-                        );
-                        await _db.SaveChangesAsync();
+                        toolResult = $"That time slot is not available for {stylist} (too close to another appointment, including cleanup buffer). Suggest a different time or ask if they'd like to join the waitlist.";
                     }
-
-                    var booking = new Booking
+                    else
                     {
-                        SalonId = salonId,
-                        Service = service,
-                        Stylist = stylist,
-                        AppointmentDate = appointmentStart,
-                        Status = "confirmed",
-                        CustomerPhone = customerNumber,
-                        EventId = eventId,
-                        Price = price
-                    };
-                    _db.Bookings.Add(booking);
+                        var summary = $"{service} - {customerName} (via Kappi AI)";
 
-                    customer.Name = customerName;
-                    customer.PreferredStylist = stylist;
-                    customer.PreferredService = service;
-                    customer.TotalBookings += 1;
-                    customer.LastVisit = appointmentStart;
+                        string eventId = "saved";
+                        if (salon?.GoogleAccessToken != null)
+                        {
+                            if (salon.GoogleRefreshToken != null)
+                                salon.GoogleAccessToken = await _calendarService.RefreshAccessToken(salon.GoogleRefreshToken);
 
-                    if (customer.Birthday == null && toolInput.TryGetProperty("customer_birthday", out var birthdayProp))
-{
-    var birthdayStr = birthdayProp.GetString();
-    if (!string.IsNullOrEmpty(birthdayStr) && DateTime.TryParse(birthdayStr, out var parsedBirthday))
-    {
-        customer.Birthday = DateTime.SpecifyKind(parsedBirthday, DateTimeKind.Utc);
-    }
-}
+                            eventId = await _calendarService.CreateBooking(
+                                salon.GoogleAccessToken,
+                                summary,
+                                appointmentStart,
+                                duration,
+                                ""
+                            );
+                            await _db.SaveChangesAsync();
+                        }
 
-                    await _db.SaveChangesAsync();
+                        var booking = new Booking
+                        {
+                            SalonId = salonId,
+                            Service = service,
+                            Stylist = stylist,
+                            AppointmentDate = appointmentStart,
+                            DurationMinutes = duration,
+                            Status = "confirmed",
+                            CustomerPhone = customerNumber,
+                            EventId = eventId,
+                            Price = price
+                        };
+                        _db.Bookings.Add(booking);
 
-                    var loyaltyMessage = "";
-                    if (customer.TotalBookings % 5 == 0)
-                        loyaltyMessage = $" This is their {customer.TotalBookings}th booking — trigger a loyalty reward message.";
+                        customer.Name = customerName;
+                        customer.PreferredStylist = stylist;
+                        customer.PreferredService = service;
+                        customer.TotalBookings += 1;
+                        customer.LastVisit = appointmentStart;
 
-                    toolResult = $"Booking successfully created. Appointment: {service} for {customerName} with {stylist} on {date} at {time}.{loyaltyMessage}";
+                        if (customer.Birthday == null && toolInput.TryGetProperty("customer_birthday", out var birthdayProp))
+                        {
+                            var birthdayStr = birthdayProp.GetString();
+                            if (!string.IsNullOrEmpty(birthdayStr) && DateTime.TryParse(birthdayStr, out var parsedBirthday))
+                            {
+                                customer.Birthday = DateTime.SpecifyKind(parsedBirthday, DateTimeKind.Utc);
+                            }
+                        }
+
+                        await _db.SaveChangesAsync();
+
+                        var loyaltyMessage = "";
+                        if (customer.TotalBookings % 5 == 0)
+                            loyaltyMessage = $" This is their {customer.TotalBookings}th booking — trigger a loyalty reward message.";
+
+                        toolResult = $"Booking successfully created. Appointment: {service} for {customerName} with {stylist} on {date} at {time}.{loyaltyMessage}";
+                    }
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Failed to create booking: {Message}", ex.Message);
                     toolResult = $"Booking created in system but calendar sync failed. Details: {ex.Message}";
+                }
+            }
+            else if (toolName == "reschedule_booking")
+            {
+                try
+                {
+                    var normalizedPhone = customerNumber.Replace("whatsapp:", "");
+                    var booking = await _db.Bookings.FirstOrDefaultAsync(b =>
+                        b.SalonId == salonId &&
+                        (b.CustomerPhone == customerNumber ||
+                         b.CustomerPhone == $"whatsapp:{normalizedPhone}" ||
+                         b.CustomerPhone!.Contains(normalizedPhone)) &&
+                        b.Status == "confirmed");
+
+                    if (booking == null)
+                    {
+                        booking = await _db.Bookings
+                            .Where(b => b.SalonId == salonId && b.Status == "confirmed" && b.AppointmentDate > DateTime.UtcNow)
+                            .OrderBy(b => b.AppointmentDate)
+                            .FirstOrDefaultAsync();
+                    }
+
+                    if (booking == null)
+                    {
+                        toolResult = "No booking found to reschedule.";
+                    }
+                    else
+                    {
+                        var newDateStr = toolInput.GetProperty("new_date").GetString()!;
+                        var newTimeStr = toolInput.GetProperty("new_time").GetString()!;
+                        var amsterdamZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Amsterdam");
+                        var newLocalTime = DateTime.Parse($"{newDateStr} {newTimeStr}");
+                        var newAppointmentStart = TimeZoneInfo.ConvertTimeToUtc(newLocalTime, amsterdamZone);
+
+                        var conflict = await HasConflictAsync(salonId, booking.Stylist, newAppointmentStart, booking.DurationMinutes, booking.Id);
+                        if (conflict)
+                        {
+                            toolResult = $"That new time is not available for {booking.Stylist} (too close to another appointment, including cleanup buffer). Suggest a different time.";
+                        }
+                        else
+                        {
+                            booking.AppointmentDate = newAppointmentStart;
+
+                            if (!string.IsNullOrEmpty(booking.EventId) && booking.EventId != "saved" && salon?.GoogleAccessToken != null)
+                            {
+                                try
+                                {
+                                    if (salon.GoogleRefreshToken != null)
+                                        salon.GoogleAccessToken = await _calendarService.RefreshAccessToken(salon.GoogleRefreshToken);
+
+                                    await _calendarService.UpdateBooking(salon.GoogleAccessToken, booking.EventId, newAppointmentStart, booking.DurationMinutes);
+                                }
+                                catch (Exception calEx)
+                                {
+                                    _logger.LogError(calEx, "Failed to update calendar event for reschedule of booking {Id}", booking.Id);
+                                }
+                            }
+
+                            await _db.SaveChangesAsync();
+                            toolResult = $"Booking successfully rescheduled to {newDateStr} at {newTimeStr}.";
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to reschedule booking");
+                    toolResult = $"Reschedule failed: {ex.Message}";
                 }
             }
             else if (toolName == "cancel_booking")
@@ -426,7 +541,7 @@ public class ClaudeService : IClaudeService
         return reply;
     }
 
-       private string GetSalonSystemPrompt(string customerContext, Salon? salon)
+    private string GetSalonSystemPrompt(string customerContext, Salon? salon)
     {
         var today = DateTime.Now.ToString("dddd d MMMM yyyy");
         var tomorrow = DateTime.Now.AddDays(1).ToString("dddd d MMMM yyyy");
@@ -463,9 +578,11 @@ public class ClaudeService : IClaudeService
                 - When a customer gives their name, date, time and service — call create_booking IMMEDIATELY
                 - Do NOT ask for confirmation before calling the tool
                 - If the stylist works on that day and the time is within salon hours — BOOK IT
+                - If create_booking or reschedule_booking says the slot is unavailable, apologize briefly, suggest a nearby alternative time, or offer the waitlist — never just repeat the same time
                 - After the tool succeeds, confirm the booking details to the customer
                 - If the tool result mentions a loyalty milestone, congratulate them and mention a reward
                 - If a customer has 2 or more no-shows, mention politely that a deposit may be required before confirming, but still create the booking with create_booking
+                - When a customer wants to reschedule/move their appointment, call reschedule_booking immediately with the new date and time
                 - When a customer wants to cancel, call cancel_booking immediately
                 - When a customer asks to be on a waitlist, call add_to_waitlist immediately
                 - When cancellation succeeds, tell the customer it is cancelled and wish them well

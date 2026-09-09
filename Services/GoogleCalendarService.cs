@@ -12,6 +12,7 @@ public interface IGoogleCalendarService
     Task<string> CreateBooking(string accessToken, string summary, DateTime start, int durationMinutes, string attendeeEmail);
     Task DeleteBooking(string accessToken, string eventId);
     Task<string> RefreshAccessToken(string refreshToken);
+    Task UpdateBooking(string accessToken, string eventId, DateTime newStart, int durationMinutes);
 }
 
 public class GoogleCalendarService : IGoogleCalendarService
@@ -109,4 +110,12 @@ public class GoogleCalendarService : IGoogleCalendarService
             ApplicationName = "Kappi AI"
         });
     }
+    public async Task UpdateBooking(string accessToken, string eventId, DateTime newStart, int durationMinutes)
+{
+    var service = GetCalendarService(accessToken);
+    var existingEvent = await service.Events.Get("primary", eventId).ExecuteAsync();
+    existingEvent.Start = new EventDateTime { DateTimeDateTimeOffset = newStart };
+    existingEvent.End = new EventDateTime { DateTimeDateTimeOffset = newStart.AddMinutes(durationMinutes) };
+    await service.Events.Update(existingEvent, "primary", eventId).ExecuteAsync();
+}
 }
