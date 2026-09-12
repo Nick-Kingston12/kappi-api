@@ -19,7 +19,7 @@ public class WhatsAppController : ControllerBase
     }
 
     [HttpPost("webhook")]
-    [ValidateRequest]
+    //[ValidateRequest]
     [EnableRateLimiting("webhook")]
     public async Task<IActionResult> ReceiveMessage([FromForm] TwilioWebhookRequest request)
     {
