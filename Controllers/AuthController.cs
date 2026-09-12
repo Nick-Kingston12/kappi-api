@@ -67,8 +67,8 @@ public class AuthController : ControllerBase
 
     private string GenerateToken(SalonOwner owner)
     {
-        var secret = _config["Jwt__Secret"]
-            ?? throw new InvalidOperationException("Jwt__Secret environment variable is not set.");
+        var secret = _config["Jwt:Secret"]
+    ?? throw new InvalidOperationException("Jwt:Secret environment variable is not set.");
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
         var token = new JwtSecurityToken(

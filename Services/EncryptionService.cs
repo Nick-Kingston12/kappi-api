@@ -15,8 +15,8 @@ public class EncryptionService : IEncryptionService
 
     public EncryptionService(IConfiguration config)
     {
-        var keyString = config["Encryption__Key"]
-            ?? throw new InvalidOperationException("Encryption__Key environment variable is not set.");
+       var keyString = config["Encryption:Key"]
+    ?? throw new InvalidOperationException("Encryption:Key environment variable is not set.");
         _key = Convert.FromBase64String(keyString);
     }
 

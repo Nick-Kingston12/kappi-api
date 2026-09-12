@@ -24,8 +24,8 @@ builder.Services.AddHangfire(config =>
 builder.Services.AddHangfireServer();
 
 // JWT Authentication
-var jwtSecret = builder.Configuration["Jwt__Secret"]
-    ?? throw new InvalidOperationException("Jwt__Secret environment variable is not set.");
+var jwtSecret = builder.Configuration["Jwt:Secret"]
+    ?? throw new InvalidOperationException("Jwt:Secret environment variable is not set.");
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -43,7 +43,7 @@ builder.Services.AddAuthorization();
 // Twilio webhook signature validation
 builder.Services.AddTwilioRequestValidation((serviceProvider, options) =>
 {
-    options.AuthToken = builder.Configuration["Twilio__AuthToken"];
+    options.AuthToken = builder.Configuration["Twilio:AuthToken"];
 });
 
 // Rate limiting

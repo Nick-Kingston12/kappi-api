@@ -420,9 +420,9 @@ public class ClaudeService : IClaudeService
                                 {
                                     var notifyMessage = $"Goed nieuws {entry.CustomerName}! 🎉 Er is een plek vrijgekomen bij {salon?.Name}. Wil je een afspraak maken? Stuur ons een bericht!";
 
-                                    var twilioSid = _config["Twilio__AccountSid"];
-                                    var twilioToken = _config["Twilio__AuthToken"];
-                                    var twilioFrom = _config["Twilio__WhatsAppNumber"];
+                                    var twilioSid = _config["Twilio:AccountSid"];
+var twilioToken = _config["Twilio:AuthToken"];
+var twilioFrom = _config["Twilio:WhatsAppNumber"];
 
                                     using var twilioClient = new HttpClient();
                                     var authBytes = System.Text.Encoding.ASCII.GetBytes($"{twilioSid}:{twilioToken}");
