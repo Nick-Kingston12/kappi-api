@@ -6,6 +6,8 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Hangfire;
 using Hangfire.PostgreSql;
+using Twilio.AspNet.Core;
+using Microsoft.AspNetCore.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -22,7 +24,8 @@ builder.Services.AddHangfire(config =>
 builder.Services.AddHangfireServer();
 
 // JWT Authentication
-var jwtSecret = builder.Configuration["Jwt__Secret"] ?? "KappiAI-Super-Secret-Key-2026-Nijmegen-Netherlands";
+var jwtSecret = builder.Configuration["Jwt__Secret"]
+    ?? throw new InvalidOperationException("Jwt__Secret environment variable is not set.");
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -37,12 +40,36 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization();
 
+// Twilio webhook signature validation
+builder.Services.AddTwilioRequestValidation((serviceProvider, options) =>
+{
+    options.AuthToken = builder.Configuration["Twilio__AuthToken"];
+});
+
+// Rate limiting
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddFixedWindowLimiter("webhook", opt =>
+    {
+        opt.PermitLimit = 30;
+        opt.Window = TimeSpan.FromMinutes(1);
+        opt.QueueLimit = 0;
+    });
+    options.AddFixedWindowLimiter("auth", opt =>
+    {
+        opt.PermitLimit = 10;
+        opt.Window = TimeSpan.FromMinutes(1);
+        opt.QueueLimit = 0;
+    });
+});
+
 // Kappi services
 builder.Services.AddScoped<IWhatsAppService, WhatsAppService>();
 builder.Services.AddScoped<IClaudeService, ClaudeService>();
 builder.Services.AddScoped<IGoogleCalendarService, GoogleCalendarService>();
 builder.Services.AddScoped<IReminderService, ReminderService>();
 builder.Services.AddScoped<IEngagementService, EngagementService>();
+builder.Services.AddSingleton<IEncryptionService, EncryptionService>();
 
 // CORS
 builder.Services.AddCors(options =>
@@ -67,6 +94,7 @@ using (var scope = app.Services.CreateScope())
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 app.UseHangfireDashboard("/hangfire");
 app.MapControllers();
 
@@ -81,13 +109,11 @@ RecurringJob.AddOrUpdate<IEngagementService>(
     service => service.SendReviewRequestsAsync(),
     "0 * * * *"
 );
-
 RecurringJob.AddOrUpdate<IEngagementService>(
     "send-birthday-messages",
     service => service.SendBirthdayMessagesAsync(),
     "0 9 * * *"
 );
-
 RecurringJob.AddOrUpdate<IEngagementService>(
     "send-rebooking-suggestions",
     service => service.SendRebookingSuggestionsAsync(),

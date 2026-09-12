@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
@@ -21,13 +22,12 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("register")]
+    [EnableRateLimiting("auth")]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
-        // Check if email already exists
         if (await _db.SalonOwners.AnyAsync(s => s.Email == request.Email))
             return BadRequest(new { message = "E-mailadres al in gebruik" });
 
-        // Create salon
         var salon = new Salon
         {
             Name = request.SalonName,
@@ -39,7 +39,6 @@ public class AuthController : ControllerBase
         _db.Salons.Add(salon);
         await _db.SaveChangesAsync();
 
-        // Create owner
         var owner = new SalonOwner
         {
             Name = request.Name,
@@ -55,6 +54,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("login")]
+    [EnableRateLimiting("auth")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
         var owner = await _db.SalonOwners.FirstOrDefaultAsync(s => s.Email == request.Email);
@@ -67,8 +67,9 @@ public class AuthController : ControllerBase
 
     private string GenerateToken(SalonOwner owner)
     {
-        var secret = _config["Jwt__Secret"] ?? "KappiAI-Super-Secret-Key-2026-Nijmegen-Netherlands";
-var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
+        var secret = _config["Jwt__Secret"]
+            ?? throw new InvalidOperationException("Jwt__Secret environment variable is not set.");
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
         var token = new JwtSecurityToken(
             claims: new[]

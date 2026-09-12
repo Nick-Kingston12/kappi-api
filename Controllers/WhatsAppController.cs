@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using KappiApi.Services;
+using Twilio.AspNet.Core;
 
 namespace KappiApi.Controllers;
 
@@ -16,22 +18,22 @@ public class WhatsAppController : ControllerBase
         _logger = logger;
     }
 
-    // Twilio sends a POST to this endpoint every time a WhatsApp message comes in
     [HttpPost("webhook")]
+    [ValidateRequest]
+    [EnableRateLimiting("webhook")]
     public async Task<IActionResult> ReceiveMessage([FromForm] TwilioWebhookRequest request)
     {
         _logger.LogInformation("Incoming WhatsApp message from {From}: {Body}", request.From, request.Body);
 
         await _whatsAppService.HandleIncomingMessageAsync(request.From, request.Body);
 
-        // Twilio expects a 200 OK with empty TwiML response
         return Content("<Response></Response>", "text/xml");
     }
 }
 
 public class TwilioWebhookRequest
 {
-    public string From { get; set; } = string.Empty;  // e.g. whatsapp:+31612345678
-    public string Body { get; set; } = string.Empty;  // The message text
-    public string To { get; set; } = string.Empty;    // Your Kappi WhatsApp number
+    public string From { get; set; } = string.Empty;
+    public string Body { get; set; } = string.Empty;
+    public string To { get; set; } = string.Empty;
 }

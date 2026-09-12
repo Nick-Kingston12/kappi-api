@@ -16,18 +16,20 @@ public class ClaudeService : IClaudeService
     private readonly ILogger<ClaudeService> _logger;
     private readonly AppDbContext _db;
     private readonly IGoogleCalendarService _calendarService;
+    private readonly IEncryptionService _encryption;
 
-    private static readonly Dictionary<string, List<object>> _conversationHistory = new();
+   private static readonly Dictionary<string, List<object>> _conversationHistory = new();
     private const int BufferMinutes = 15;
 
-    public ClaudeService(IConfiguration config, IHttpClientFactory httpClientFactory, ILogger<ClaudeService> logger, AppDbContext db, IGoogleCalendarService calendarService)
-    {
-        _config = config;
-        _httpClientFactory = httpClientFactory;
-        _logger = logger;
-        _db = db;
-        _calendarService = calendarService;
-    }
+    public ClaudeService(IConfiguration config, IHttpClientFactory httpClientFactory, ILogger<ClaudeService> logger, AppDbContext db, IGoogleCalendarService calendarService, IEncryptionService encryption)
+{
+    _config = config;
+    _httpClientFactory = httpClientFactory;
+    _logger = logger;
+    _db = db;
+    _calendarService = calendarService;
+    _encryption = encryption;
+}
 
     private async Task<bool> HasConflictAsync(int salonId, string stylist, DateTime start, int durationMinutes, int? excludeBookingId = null)
     {
@@ -225,19 +227,24 @@ public class ClaudeService : IClaudeService
 
                         string eventId = "saved";
                         if (salon?.GoogleAccessToken != null)
-                        {
-                            if (salon.GoogleRefreshToken != null)
-                                salon.GoogleAccessToken = await _calendarService.RefreshAccessToken(salon.GoogleRefreshToken);
+{
+    var liveAccessToken = _encryption.Decrypt(salon.GoogleAccessToken);
+    if (salon.GoogleRefreshToken != null)
+    {
+        var liveRefreshToken = _encryption.Decrypt(salon.GoogleRefreshToken);
+        liveAccessToken = await _calendarService.RefreshAccessToken(liveRefreshToken);
+        salon.GoogleAccessToken = _encryption.Encrypt(liveAccessToken);
+    }
 
-                            eventId = await _calendarService.CreateBooking(
-                                salon.GoogleAccessToken,
-                                summary,
-                                appointmentStart,
-                                duration,
-                                ""
-                            );
-                            await _db.SaveChangesAsync();
-                        }
+    eventId = await _calendarService.CreateBooking(
+        liveAccessToken,
+        summary,
+        appointmentStart,
+        duration,
+        ""
+    );
+    await _db.SaveChangesAsync();
+}
 
                         var booking = new Booking
                         {
@@ -283,7 +290,7 @@ public class ClaudeService : IClaudeService
                     toolResult = $"Booking created in system but calendar sync failed. Details: {ex.Message}";
                 }
             }
-            else if (toolName == "reschedule_booking")
+                       else if (toolName == "reschedule_booking")
             {
                 try
                 {
@@ -328,10 +335,15 @@ public class ClaudeService : IClaudeService
                             {
                                 try
                                 {
+                                    var liveAccessToken = _encryption.Decrypt(salon.GoogleAccessToken);
                                     if (salon.GoogleRefreshToken != null)
-                                        salon.GoogleAccessToken = await _calendarService.RefreshAccessToken(salon.GoogleRefreshToken);
+                                    {
+                                        var liveRefreshToken = _encryption.Decrypt(salon.GoogleRefreshToken);
+                                        liveAccessToken = await _calendarService.RefreshAccessToken(liveRefreshToken);
+                                        salon.GoogleAccessToken = _encryption.Encrypt(liveAccessToken);
+                                    }
 
-                                    await _calendarService.UpdateBooking(salon.GoogleAccessToken, booking.EventId, newAppointmentStart, booking.DurationMinutes);
+                                    await _calendarService.UpdateBooking(liveAccessToken, booking.EventId, newAppointmentStart, booking.DurationMinutes);
                                 }
                                 catch (Exception calEx)
                                 {
@@ -375,20 +387,24 @@ public class ClaudeService : IClaudeService
                         booking.Status = "cancelled";
 
                         if (!string.IsNullOrEmpty(booking.EventId) && booking.EventId != "saved" && salon?.GoogleAccessToken != null)
-                        {
-                            try
-                            {
-                                if (salon.GoogleRefreshToken != null)
-                                    salon.GoogleAccessToken = await _calendarService.RefreshAccessToken(salon.GoogleRefreshToken);
+{
+    try
+    {
+        var liveAccessToken = _encryption.Decrypt(salon.GoogleAccessToken);
+        if (salon.GoogleRefreshToken != null)
+        {
+            var liveRefreshToken = _encryption.Decrypt(salon.GoogleRefreshToken);
+            liveAccessToken = await _calendarService.RefreshAccessToken(liveRefreshToken);
+            salon.GoogleAccessToken = _encryption.Encrypt(liveAccessToken);
+        }
 
-                                await _calendarService.DeleteBooking(salon.GoogleAccessToken, booking.EventId);
-                            }
-                            catch (Exception calEx)
-                            {
-                                _logger.LogError(calEx, "Failed to delete calendar event for booking {BookingId}", booking.Id);
-                            }
-                        }
-
+        await _calendarService.DeleteBooking(liveAccessToken, booking.EventId);
+    }
+    catch (Exception calEx)
+    {
+        _logger.LogError(calEx, "Failed to delete calendar event for booking {BookingId}", booking.Id);
+    }
+}
                         await _db.SaveChangesAsync();
 
                         var waitlistCount = 0;
